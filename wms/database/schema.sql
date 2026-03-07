@@ -16,10 +16,12 @@ CREATE TABLE IF NOT EXISTS products (
     bulk_weight_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
     type VARCHAR(50) DEFAULT NULL,
     glazing VARCHAR(50) DEFAULT NULL,
+    stock_type ENUM('BULK','CONTAINER_EXTRA') NOT NULL DEFAULT 'BULK',
+    order_code VARCHAR(50) DEFAULT NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_product (fish_name, size, type, glazing)
+    UNIQUE KEY uq_product (fish_name, size, type, glazing, stock_type, order_code)
 ) ENGINE=InnoDB;
 
 -- ============================================================
@@ -47,6 +49,10 @@ CREATE TABLE IF NOT EXISTS lots (
     sticker VARCHAR(100) DEFAULT NULL,
     product_id INT NOT NULL,
     notes TEXT DEFAULT NULL,
+    production_date DATE DEFAULT NULL,
+    expiration_date DATE DEFAULT NULL,
+    st_no VARCHAR(50) DEFAULT NULL,
+    remark TEXT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES products(id) ON UPDATE CASCADE
@@ -86,10 +92,16 @@ SELECT
     p.bulk_weight_kg,
     p.type,
     p.glazing,
+    p.stock_type,
+    p.order_code,
     l.id AS lot_id,
     l.lot_no,
     l.cs_in_date,
     l.sticker,
+    l.production_date,
+    l.expiration_date,
+    l.st_no,
+    l.remark,
     loc.id AS location_id,
     loc.line_place,
     loc.stack_no,

@@ -29,19 +29,17 @@ const upload = multer({
 });
 
 // Helper: find or create product (skip if duplicate)
-async function findOrCreateProduct(conn, fishName, size, bulkWeight, type, glazing) {
-  // Try to find existing product first
+async function findOrCreateProduct(conn, fishName, size, bulkWeight, type, glazing, stockType = 'BULK', orderCode = null) {
   const [existing] = await conn.query(
-    `SELECT id FROM products WHERE fish_name = ? AND size = ? AND COALESCE(type,'') = COALESCE(?,'') AND COALESCE(glazing,'') = COALESCE(?,'') AND is_active = 1`,
-    [fishName, size, type || '', glazing || '']
+    `SELECT id FROM products WHERE fish_name = ? AND size = ? AND COALESCE(type,'') = COALESCE(?,'') AND COALESCE(glazing,'') = COALESCE(?,'') AND stock_type = ? AND COALESCE(order_code,'') = COALESCE(?,'') AND is_active = 1`,
+    [fishName, size, type || '', glazing || '', stockType, orderCode || '']
   );
   if (existing.length > 0) {
     return { id: existing[0].id, isNew: false };
   }
-  // Create new product
   const [result] = await conn.query(
-    'INSERT INTO products (fish_name, size, bulk_weight_kg, type, glazing) VALUES (?, ?, ?, ?, ?)',
-    [fishName, size, bulkWeight, type || null, glazing || null]
+    'INSERT INTO products (fish_name, size, bulk_weight_kg, type, glazing, stock_type, order_code) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [fishName, size, bulkWeight, type || null, glazing || null, stockType, orderCode || null]
   );
   return { id: result.insertId, isNew: true };
 }
@@ -174,6 +172,125 @@ router.post('/', upload.single('file'), async (req, res) => {
   } catch (error) {
     await conn.rollback();
     console.error('Error processing upload:', error);
+    res.status(500).json({ error: 'Failed to process Excel file: ' + error.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// POST upload Container Extra Excel file
+router.post('/container-extra', upload.single('file'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    await conn.beginTransaction();
+
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (data.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty' });
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    let productsCreated = 0;
+    let productsReused = 0;
+    let locationsCreated = 0;
+    let locationsReused = 0;
+    const errors = [];
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      try {
+        const orderCode = (row['Order'] || row['order'] || row['Order Code'] || '').toString().trim();
+        const fishName = (row['Fish Name'] || row['fish_name'] || row['Fish'] || '').toString().trim();
+        const size = (row['Size'] || row['size'] || '').toString().trim() || '-';
+        const packedSize = parseFloat(row['Packed size'] || row['Packed Size'] || row['packed_size'] || row['Packed size (KG)'] || 0);
+        const productionDateRaw = row['Production/Packed Date'] || row['Production Date'] || row['production_date'] || '';
+        const expirationDateRaw = row['Expiration Date'] || row['expiration_date'] || row['Exp Date'] || '';
+        const balanceMC = parseInt(row['Balance MC'] || row['Balance'] || row['Hand On Balance'] || row['Qty'] || 0) || 0;
+        const stNo = (row['St No'] || row['st_no'] || row['Stock No'] || '').toString().trim();
+        const linePlace = (row['Line'] || row['Lines / Place'] || row['line_place'] || row['Location'] || '').toString().trim();
+        const remark = (row['Remark'] || row['remark'] || row['Remarks'] || '').toString().trim();
+
+        if (!fishName) {
+          skipped++;
+          errors.push(`Row ${i + 2}: Skipped — missing Fish Name`);
+          continue;
+        }
+
+        // 1. Find or create product as CONTAINER_EXTRA
+        const product = await findOrCreateProduct(conn, fishName, size, packedSize, null, null, 'CONTAINER_EXTRA', orderCode || null);
+        if (product.isNew) productsCreated++;
+        else productsReused++;
+
+        // 2. Find or create location
+        const locCode = linePlace || `CE-IMPORT-${i + 1}`;
+        const location = await findOrCreateLocation(conn, locCode, 1, 1);
+        if (location.isNew) locationsCreated++;
+        else locationsReused++;
+
+        // 3. Parse dates
+        let productionDate = null;
+        if (productionDateRaw) {
+          const d = new Date(productionDateRaw);
+          if (!isNaN(d.getTime())) productionDate = d.toISOString().split('T')[0];
+        }
+        let expirationDate = null;
+        if (expirationDateRaw) {
+          const d = new Date(expirationDateRaw);
+          if (!isNaN(d.getTime())) expirationDate = d.toISOString().split('T')[0];
+        }
+
+        // 4. Create lot with extra fields
+        const lotNo = `CE-${Date.now()}-${i}`;
+        const csInDate = productionDate || new Date().toISOString().split('T')[0];
+
+        const [lotResult] = await conn.query(
+          'INSERT INTO lots (lot_no, cs_in_date, product_id, production_date, expiration_date, st_no, remark) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [lotNo, csInDate, product.id, productionDate, expirationDate, stNo || null, remark || null]
+        );
+        const lotId = lotResult.insertId;
+
+        // 5. Create IN movement for balance
+        if (balanceMC > 0) {
+          await conn.query(
+            `INSERT INTO movements (lot_id, location_id, quantity_mc, weight_kg, movement_type, reference_no, created_by)
+             VALUES (?, ?, ?, ?, 'IN', 'CE-EXCEL-IMPORT', 'excel-import')`,
+            [lotId, location.id, balanceMC, balanceMC * packedSize]
+          );
+        }
+
+        imported++;
+      } catch (rowError) {
+        errors.push(`Row ${i + 2}: ${rowError.message}`);
+        skipped++;
+      }
+    }
+
+    await conn.commit();
+
+    res.json({
+      message: 'Container Extra import completed',
+      total_rows: data.length,
+      imported,
+      skipped,
+      products_created: productsCreated,
+      products_reused: productsReused,
+      locations_created: locationsCreated,
+      locations_reused: locationsReused,
+      errors: errors.slice(0, 20)
+    });
+
+  } catch (error) {
+    await conn.rollback();
+    console.error('Error processing container extra upload:', error);
     res.status(500).json({ error: 'Failed to process Excel file: ' + error.message });
   } finally {
     conn.release();

@@ -1,14 +1,31 @@
 import React, { useState, useRef } from 'react';
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiPackage, FiBox } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { uploadExcel } from '../services/api';
+import { uploadExcel, uploadContainerExtra } from '../services/api';
+
+const TABS = [
+  { id: 'BULK', label: 'Bulk Stock', icon: <FiPackage /> },
+  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> }
+];
+
+const COLUMN_HELP = {
+  BULK: 'Fish Name, Size, Bulk Weight (KG), Type, Glazing, CS In Date, Sticker, Lines / Place, Stack No, Stack Total, Hand On Balance',
+  CONTAINER_EXTRA: 'Order, Fish Name, Size, Packed size, Production/Packed Date, Expiration Date, Balance MC, St No, Line, Remark'
+};
 
 function ExcelUpload() {
+  const [activeTab, setActiveTab] = useState('BULK');
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef();
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setFile(null);
+    setResult(null);
+  };
 
   const handleFileChange = (e) => {
     const f = e.target.files[0];
@@ -30,7 +47,8 @@ function ExcelUpload() {
     setUploading(true);
     setResult(null);
     try {
-      const res = await uploadExcel(file);
+      const uploadFn = activeTab === 'CONTAINER_EXTRA' ? uploadContainerExtra : uploadExcel;
+      const res = await uploadFn(file);
       setResult(res.data);
       toast.success(`Import completed: ${res.data.imported} rows imported`);
     } catch (err) {
@@ -47,14 +65,26 @@ function ExcelUpload() {
         <h2><FiUpload /> Excel Upload</h2>
       </div>
       <div className="page-body">
+        <div className="stock-type-tabs">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              className={`stock-type-tab ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => handleTabChange(tab.id)}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div className="card" style={{ maxWidth: 700 }}>
           <div className="card-header">
-            <h3>Import Stock Data from Excel</h3>
+            <h3>Import {activeTab === 'CONTAINER_EXTRA' ? 'Container Extra' : 'Bulk Stock'} Data from Excel</h3>
           </div>
           <div className="card-body">
             <div className="alert alert-info">
               Your Excel file should have these columns (in any order):
-              <br/><strong>Fish Name, Size, Bulk Weight (KG), Type, Glazing, CS In Date, Sticker, Lines / Place, Stack No, Stack Total, Hand On Balance</strong>
+              <br/><strong>{COLUMN_HELP[activeTab]}</strong>
             </div>
 
             <div

@@ -40,6 +40,7 @@ function Withdraw() {
   const [withdrawDate, setWithdrawDate] = useState(new Date().toISOString().slice(0, 10));
   const [requestTime, setRequestTime] = useState(new Date().toTimeString().slice(0, 5));
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [dateFilter, setDateFilter] = useState('');
   const [expandedRequest, setExpandedRequest] = useState(null);
   const [requestDetails, setRequestDetails] = useState(null);
 
@@ -49,7 +50,7 @@ function Withdraw() {
       fetchMyRequests();
     }
     // eslint-disable-next-line
-  }, [department, statusFilter]);
+  }, [department, statusFilter, dateFilter]);
 
   const fetchInventory = async () => {
     setLoading(true);
@@ -67,6 +68,7 @@ function Withdraw() {
     try {
       const params = { department };
       if (statusFilter !== 'ALL') params.status = statusFilter;
+      if (dateFilter) params.date = dateFilter;
       const res = await getWithdrawals(params);
       setMyRequests(res.data);
       setExpandedRequest(null);
@@ -89,6 +91,20 @@ function Withdraw() {
     }
   };
 
+  // Group withdrawal requests by day (for day-by-day display)
+  const requestsByDay = useMemo(() => {
+    const groups = {};
+    myRequests.forEach(req => {
+      const raw = req.withdraw_date || req.created_at;
+      const d = raw ? new Date(raw) : new Date();
+      const dateKey = d.toISOString().slice(0, 10);
+      const dateLabel = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      if (!groups[dateKey]) groups[dateKey] = { dateKey, dateLabel, requests: [] };
+      groups[dateKey].requests.push(req);
+    });
+    return Object.values(groups).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+  }, [myRequests]);
+
   // Group inventory by product (fish_name + size + bulk_weight + type + glazing)
   const groupedInventory = useMemo(() => {
     // Filter first
@@ -99,13 +115,16 @@ function Withdraw() {
         item.fish_name.toLowerCase().includes(q) ||
         item.size.toLowerCase().includes(q) ||
         item.line_place.toLowerCase().includes(q) ||
-        (item.lot_no && item.lot_no.toLowerCase().includes(q))
+        (item.lot_no && item.lot_no.toLowerCase().includes(q)) ||
+        (item.order_code && item.order_code.toLowerCase().includes(q))
       );
     }
-    // Group by product identity
+    // Group by product identity (include stock_type and order_code so BULK vs EXTRA / different orders are separate)
     const groups = {};
     filtered.forEach(item => {
-      const key = `${item.fish_name}||${item.size}||${item.bulk_weight_kg}||${item.type || ''}||${item.glazing || ''}`;
+      const st = item.stock_type || 'BULK';
+      const oc = item.order_code || '';
+      const key = `${item.fish_name}||${item.size}||${item.bulk_weight_kg}||${item.type || ''}||${item.glazing || ''}||${st}||${oc}`;
       if (!groups[key]) {
         groups[key] = {
           key,
@@ -114,9 +133,11 @@ function Withdraw() {
           bulk_weight_kg: item.bulk_weight_kg,
           type: item.type || '',
           glazing: item.glazing || '',
+          stock_type: st,
+          order_code: oc,
           total_mc: 0,
           total_kg: 0,
-          subItems: [] // individual lot+location items, sorted by nearest line
+          subItems: []
         };
       }
       const mc = Number(item.hand_on_balance_mc) || 0;
@@ -144,6 +165,8 @@ function Withdraw() {
       bulk_weight_kg: group.bulk_weight_kg,
       type: group.type,
       glazing: group.glazing,
+      stock_type: group.stock_type,
+      order_code: group.order_code,
       request_qty: 1,
       max_qty: group.total_mc,
       total_kg: group.total_kg,
@@ -311,6 +334,30 @@ function Withdraw() {
               </div>
             </div>
 
+            {/* Date filter — find by date */}
+            {(() => {
+              const todayStr = new Date().toISOString().slice(0, 10);
+              const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+              const yesterdayStr = yesterday.toISOString().slice(0, 10);
+              return (
+                <div className="wd-orders-date-bar">
+                  <label className="wd-orders-date-label">Date:</label>
+                  <input
+                    type="date"
+                    className="form-control wd-orders-date-input"
+                    value={dateFilter}
+                    onChange={e => setDateFilter(e.target.value)}
+                    title="Filter by request date"
+                  />
+                  <div className="wd-orders-date-quick">
+                    <button type="button" className={`wd-orders-date-btn ${!dateFilter ? 'active' : ''}`} onClick={() => setDateFilter('')}>All</button>
+                    <button type="button" className={`wd-orders-date-btn ${dateFilter === todayStr ? 'active' : ''}`} onClick={() => setDateFilter(todayStr)}>Today</button>
+                    <button type="button" className={`wd-orders-date-btn ${dateFilter === yesterdayStr ? 'active' : ''}`} onClick={() => setDateFilter(yesterdayStr)}>Yesterday</button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Status Tabs */}
             <div className="wd-orders-tabs">
               {['ALL', 'PENDING', 'TAKING_OUT', 'READY', 'FINISHED', 'CANCELLED'].map(s => (
@@ -324,19 +371,29 @@ function Withdraw() {
               ))}
             </div>
 
-            {/* Order Cards */}
+            {/* Order Cards — day by day */}
             {myRequests.length === 0 ? (
               <div className="wd-orders-empty">
                 <div className="wd-orders-empty-icon">📦</div>
                 <h3>No withdrawal requests</h3>
-                <p>{statusFilter !== 'ALL' ? `No ${STATUS_CONFIG[statusFilter]?.label?.toLowerCase() || statusFilter.toLowerCase()} requests found` : 'Submit a withdrawal request to see it here'}</p>
+                <p>
+                  {dateFilter
+                    ? `No requests found for ${new Date(dateFilter + 'T12:00:00').toLocaleDateString(undefined, { dateStyle: 'medium' })}`
+                    : statusFilter !== 'ALL'
+                      ? `No ${STATUS_CONFIG[statusFilter]?.label?.toLowerCase() || statusFilter.toLowerCase()} requests found`
+                      : 'Submit a withdrawal request to see it here'}
+                </p>
                 <button className="btn btn-primary" onClick={() => setShowHistory(false)}>
                   <FiShoppingCart /> Start New Request
                 </button>
               </div>
             ) : (
-              <div className="wd-orders-grid">
-                {myRequests.map(req => {
+              <div className="wd-orders-by-day">
+                {requestsByDay.map(dayGroup => (
+                  <div key={dayGroup.dateKey} className="wd-orders-day-section">
+                    <h3 className="wd-orders-day-heading">{dayGroup.dateLabel}</h3>
+                    <div className="wd-orders-grid">
+                      {dayGroup.requests.map(req => {
                   const StatusIcon = STATUS_CONFIG[req.status]?.icon || FiClock;
                   const isCancelled = req.status === 'CANCELLED';
                   return (
@@ -431,7 +488,10 @@ function Withdraw() {
                       )}
                     </div>
                   );
-                })}
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -463,10 +523,15 @@ function Withdraw() {
                     const stockLabel = typeOrGlazing
                       ? `${group.fish_name}/${group.size}/${typeOrGlazing} = ${group.total_mc} MC.`
                       : `${group.fish_name}/${group.size} = ${group.total_mc} MC.`;
+                    const isExtra = (group.stock_type || 'BULK') === 'CONTAINER_EXTRA';
+                    const remark = isExtra
+                      ? (group.order_code ? `[EXTRA] Order: ${group.order_code}` : '[EXTRA]')
+                      : '[BULK]';
                     return (
                       <div key={group.key} className={`wd-stock-item ${inCart ? 'in-cart' : ''}`}>
                         <div className="wd-stock-item-info">
                           <div className="wd-stock-item-name">{stockLabel}</div>
+                          <div className="wd-stock-item-remark">{remark}</div>
                         </div>
                         <button
                           className={`btn btn-sm ${inCart ? 'btn-success' : 'btn-primary'}`}
@@ -510,6 +575,11 @@ function Withdraw() {
                             {item.size} · {Number(item.bulk_weight_kg)} KG
                             {item.type ? ` · ${item.type}` : ''}
                             {item.glazing ? ` · ${item.glazing}` : ''}
+                          </div>
+                          <div className="wd-cart-item-remark">
+                            {(item.stock_type || 'BULK') === 'CONTAINER_EXTRA'
+                              ? (item.order_code ? `[EXTRA] Order: ${item.order_code}` : '[EXTRA]')
+                              : '[BULK]'}
                           </div>
                           <div className="wd-cart-item-loc" style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 2 }}>
                             Auto-picks from {item.subItems.length} location{item.subItems.length > 1 ? 's' : ''} (nearest first)

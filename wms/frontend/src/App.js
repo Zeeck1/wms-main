@@ -7,7 +7,7 @@ import {
   FiGrid, FiPackage, FiMapPin, FiArrowDownCircle,
   FiArrowUpCircle, FiTable, FiUpload, FiClock,
   FiMenu, FiX, FiChevronLeft, FiLayers,
-  FiShoppingCart, FiSettings, FiBarChart2
+  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown
 } from 'react-icons/fi';
 
 import Dashboard from './pages/Dashboard';
@@ -24,6 +24,10 @@ import Withdraw from './pages/Withdraw';
 import WithdrawForm from './pages/WithdrawForm';
 import WithdrawReport from './pages/WithdrawReport';
 import Manage from './pages/Manage';
+import Manual from './pages/Manual';
+import NoMovementStocks from './pages/NoMovementStocks';
+import LowSafetyStocks from './pages/LowSafetyStocks';
+import Settings from './pages/Settings';
 
 // Sidebar wrapper that auto-closes on mobile route change
 function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
@@ -56,15 +60,19 @@ function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
       {link('/stock-out', <FiArrowUpCircle />, 'Stock OUT')}
       {link('/withdraw', <FiShoppingCart />, 'Withdraw')}
       {link('/manage', <FiSettings />, 'Manage')}
+      {link('/manual', <FiBook />, 'Manual')}
       {link('/movements', <FiClock />, 'Movement History')}
 
       <div className="nav-section-title"><span>Reports</span></div>
       {link('/stock-table', <FiTable />, 'Stock Table')}
       {link('/stock-chart', <FiBarChart2 />, 'Stock Chart')}
       {link('/location-layout', <FiLayers />, 'Location Layout')}
+      {link('/no-movement', <FiAlertTriangle />, 'No-Movement (+3M)')}
+      {link('/low-safety-stocks', <FiTrendingDown />, 'Low/Safety Stocks')}
 
       <div className="nav-section-title"><span>Tools</span></div>
       {link('/upload', <FiUpload />, 'Excel Upload')}
+      {link('/settings', <FiSettings />, 'Settings')}
     </nav>
   );
 }
@@ -155,6 +163,7 @@ function App() {
               <Route path="/stock-in" element={<StockIn />} />
               <Route path="/stock-out" element={<StockOut />} />
               <Route path="/stock-table" element={<StockTable />} />
+              <Route path="/manual" element={<Manual />} />
               <Route path="/stock-chart" element={<StockChart />} />
               <Route path="/upload" element={<ExcelUpload />} />
               <Route path="/withdraw" element={<Withdraw />} />
@@ -163,6 +172,9 @@ function App() {
               <Route path="/manage" element={<Manage />} />
               <Route path="/movements" element={<Movements />} />
               <Route path="/location-layout" element={<LocationLayout />} />
+              <Route path="/no-movement" element={<NoMovementStocks />} />
+              <Route path="/low-safety-stocks" element={<LowSafetyStocks />} />
+              <Route path="/settings" element={<Settings />} />
             </Routes>
           </div>
         </main>

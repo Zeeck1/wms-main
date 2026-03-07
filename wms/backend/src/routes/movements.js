@@ -136,4 +136,79 @@ router.post('/stock-out', async (req, res) => {
   }
 });
 
+// POST Manual adjustment: set balance for a lot+location (creates IN/OUT so it becomes primary data everywhere)
+router.post('/adjust', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const { lot_id, location_id, new_balance_mc, notes } = req.body;
+
+    if (!lot_id || !location_id || new_balance_mc === undefined || new_balance_mc === null) {
+      return res.status(400).json({ error: 'lot_id, location_id, and new_balance_mc are required' });
+    }
+
+    const newBalance = parseInt(new_balance_mc, 10);
+    if (isNaN(newBalance) || newBalance < 0) {
+      return res.status(400).json({ error: 'new_balance_mc must be a non-negative number' });
+    }
+
+    const [balanceRows] = await conn.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN movement_type = 'IN' THEN quantity_mc ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN movement_type = 'OUT' THEN quantity_mc ELSE 0 END), 0) AS hand_on
+      FROM movements
+      WHERE lot_id = ? AND location_id = ?
+    `, [lot_id, location_id]);
+
+    const currentBalance = balanceRows[0].hand_on || 0;
+
+    if (newBalance === currentBalance) {
+      await conn.commit();
+      return res.status(200).json({ message: 'No change', current_balance: currentBalance });
+    }
+
+    const [productRows] = await conn.query(
+      'SELECT p.bulk_weight_kg FROM lots l JOIN products p ON l.product_id = p.id WHERE l.id = ?',
+      [lot_id]
+    );
+    const bulkWeightKg = productRows[0]?.bulk_weight_kg || 0;
+
+    const ref = 'Manual adjustment';
+    const note = notes || 'Corrected from Manual page';
+
+    if (newBalance > currentBalance) {
+      const qty = newBalance - currentBalance;
+      const weightKg = qty * bulkWeightKg;
+      await conn.query(
+        `INSERT INTO movements (lot_id, location_id, quantity_mc, weight_kg, movement_type, reference_no, notes, created_by)
+         VALUES (?, ?, ?, ?, 'IN', ?, ?, 'manual')`,
+        [lot_id, location_id, qty, weightKg, ref, note]
+      );
+    } else {
+      const qty = currentBalance - newBalance;
+      const weightKg = qty * bulkWeightKg;
+      await conn.query(
+        `INSERT INTO movements (lot_id, location_id, quantity_mc, weight_kg, movement_type, reference_no, notes, created_by)
+         VALUES (?, ?, ?, ?, 'OUT', ?, ?, 'manual')`,
+        [lot_id, location_id, qty, weightKg, ref, note]
+      );
+    }
+
+    await conn.commit();
+
+    res.status(200).json({
+      message: 'Balance adjusted',
+      previous_balance: currentBalance,
+      new_balance: newBalance
+    });
+  } catch (error) {
+    await conn.rollback();
+    console.error('Error adjusting balance:', error);
+    res.status(500).json({ error: 'Failed to adjust balance' });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;

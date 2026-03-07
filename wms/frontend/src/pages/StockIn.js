@@ -3,11 +3,11 @@ import { FiArrowDownCircle, FiPlus } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { getProducts, getLocations, getLots, createLot, stockIn } from '../services/api';
 
-// Build display label for a lot (includes Size, Type, Glazing from product)
 function getLotLabel(lot) {
   if (!lot) return '';
   const parts = [lot.lot_no, lot.fish_name || 'N/A'];
   const attrs = [];
+  if (lot.order_code) attrs.push(`Order: ${lot.order_code}`);
   if (lot.size) attrs.push(`Size: ${lot.size}`);
   if (lot.type) attrs.push(`Type: ${lot.type}`);
   if (lot.glazing) attrs.push(`Glazing: ${lot.glazing}`);
@@ -32,30 +32,37 @@ function StockIn() {
     notes: ''
   });
 
-  // Separate filter inputs for lot section: Fish name, Size, Type, Glazing
   const [lotFilters, setLotFilters] = useState({
     fish_name: '',
     size: '',
     type: '',
-    glazing: ''
+    glazing: '',
+    order_code: ''
   });
-  // Final lot input: search text and dropdown visibility
   const [lotSearch, setLotSearch] = useState('');
   const [lotDropdownOpen, setLotDropdownOpen] = useState(false);
   const lotDropdownRef = useRef(null);
 
-  // New lot form
   const [showNewLot, setShowNewLot] = useState(false);
   const [newLot, setNewLot] = useState({
     lot_no: '',
     cs_in_date: new Date().toISOString().split('T')[0],
     sticker: '',
     product_id: '',
-    notes: ''
+    notes: '',
+    production_date: '',
+    expiration_date: '',
+    st_no: '',
+    remark: ''
   });
 
   useEffect(() => {
-    Promise.all([getProducts(), getLocations(), getLots()])
+    setLoading(true);
+    Promise.all([
+      getProducts(),
+      getLocations(),
+      getLots()
+    ])
       .then(([pRes, lRes, lotRes]) => {
         setProducts(pRes.data);
         setLocations(lRes.data);
@@ -65,7 +72,6 @@ function StockIn() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Close lot dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(e) {
       if (lotDropdownRef.current && !lotDropdownRef.current.contains(e.target)) {
@@ -76,22 +82,25 @@ function StockIn() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter lots first by Fish name, Size, Type, Glazing; then by lot search text (lot no, date)
   const filterMatch = (l) => {
     const fish = (l.fish_name || '').toLowerCase();
     const sz = (l.size || '').toLowerCase();
     const ty = (l.type || '').toLowerCase();
     const gl = (l.glazing || '').toLowerCase();
+    const oc = (l.order_code || '').toLowerCase();
     const fFish = (lotFilters.fish_name || '').toLowerCase().trim();
     const fSize = (lotFilters.size || '').toLowerCase().trim();
     const fType = (lotFilters.type || '').toLowerCase().trim();
     const fGlazing = (lotFilters.glazing || '').toLowerCase().trim();
+    const fOC = (lotFilters.order_code || '').toLowerCase().trim();
     if (fFish && !fish.includes(fFish)) return false;
     if (fSize && !sz.includes(fSize)) return false;
     if (fType && !ty.includes(fType)) return false;
     if (fGlazing && !gl.includes(fGlazing)) return false;
+    if (fOC && !oc.includes(fOC)) return false;
     return true;
   };
+
   const lotSearchLower = (lotSearch || '').toLowerCase().trim();
   const filteredByAttrs = lots.filter(filterMatch);
   const filteredLots = lotSearchLower
@@ -117,10 +126,16 @@ function StockIn() {
       setLots(lotRes.data);
       const newLotWithProduct = lotRes.data.find(l => l.id === res.data.id) || res.data;
       setForm({ ...form, lot_id: String(res.data.id) });
-      setLotFilters({ fish_name: newLotWithProduct.fish_name || '', size: newLotWithProduct.size || '', type: newLotWithProduct.type || '', glazing: newLotWithProduct.glazing || '' });
+      setLotFilters({
+        fish_name: newLotWithProduct.fish_name || '',
+        size: newLotWithProduct.size || '',
+        type: newLotWithProduct.type || '',
+        glazing: newLotWithProduct.glazing || '',
+        order_code: newLotWithProduct.order_code || ''
+      });
       setLotSearch(getLotLabel(newLotWithProduct));
       setShowNewLot(false);
-      setNewLot({ lot_no: '', cs_in_date: new Date().toISOString().split('T')[0], sticker: '', product_id: '', notes: '' });
+      setNewLot({ lot_no: '', cs_in_date: new Date().toISOString().split('T')[0], sticker: '', product_id: '', notes: '', production_date: '', expiration_date: '', st_no: '', remark: '' });
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create lot');
     }
@@ -142,7 +157,7 @@ function StockIn() {
       toast.success(`Stock IN recorded: ${res.data.movement.quantity_mc} MC`);
       setForm({ lot_id: '', location_id: '', quantity_mc: '', weight_kg: '', reference_no: '', notes: '' });
       setLotSearch('');
-      setLotFilters({ fish_name: '', size: '', type: '', glazing: '' });
+      setLotFilters({ fish_name: '', size: '', type: '', glazing: '', order_code: '' });
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to record stock in');
     } finally {
@@ -150,11 +165,10 @@ function StockIn() {
     }
   };
 
-  // Auto-calc weight: Bulk Weight (KG) × Quantity (MC)
   const handleQtyChange = (qty) => {
     setForm(prev => {
-      const selectedLot = lots.find(l => l.id === parseInt(prev.lot_id, 10));
-      const bulkKg = selectedLot ? Number(selectedLot.bulk_weight_kg) : 0;
+      const lot = lots.find(l => l.id === parseInt(prev.lot_id, 10));
+      const bulkKg = lot ? Number(lot.bulk_weight_kg) : 0;
       const qtyNum = parseInt(qty, 10) || 0;
       const autoWeight = bulkKg && qtyNum ? (bulkKg * qtyNum).toFixed(2) : '';
       return { ...prev, quantity_mc: qty, weight_kg: autoWeight };
@@ -197,7 +211,9 @@ function StockIn() {
                       <select className="form-control" value={newLot.product_id} onChange={e => setNewLot({ ...newLot, product_id: e.target.value })} required>
                         <option value="">Select Product</option>
                         {products.map(p => (
-                          <option key={p.id} value={p.id}>{p.fish_name} - {p.size} {p.type ? `(${p.type})` : ''}</option>
+                          <option key={p.id} value={p.id}>
+                            {p.order_code ? `[${p.order_code}] ` : ''}{p.fish_name} - {p.size} {p.type ? `(${p.type})` : ''}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -206,68 +222,66 @@ function StockIn() {
                       <input className="form-control" value={newLot.sticker} onChange={e => setNewLot({ ...newLot, sticker: e.target.value })} placeholder="Sticker info" />
                     </div>
                   </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Production Date</label>
+                      <input className="form-control" type="date" value={newLot.production_date} onChange={e => setNewLot({ ...newLot, production_date: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label>Expiration Date</label>
+                      <input className="form-control" type="date" value={newLot.expiration_date} onChange={e => setNewLot({ ...newLot, expiration_date: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>St No</label>
+                      <input className="form-control" value={newLot.st_no} onChange={e => setNewLot({ ...newLot, st_no: e.target.value })} placeholder="Stock number" />
+                    </div>
+                    <div className="form-group">
+                      <label>Remark</label>
+                      <input className="form-control" value={newLot.remark} onChange={e => setNewLot({ ...newLot, remark: e.target.value })} placeholder="Remark" />
+                    </div>
+                  </div>
                   <button type="submit" className="btn btn-success btn-sm">Create Lot</button>
                 </form>
               </div>
             )}
 
             <form onSubmit={handleStockIn}>
-              {/* Separate inputs: Fish name, Size, Type, Glazing */}
-              <div className="form-row" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+              <div className="form-row" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
                 <div className="form-group">
                   <label>Fish name</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Filter by fish name"
+                  <input type="text" className="form-control" placeholder="Filter by fish name"
                     value={lotFilters.fish_name}
-                    onChange={e => {
-                      setLotFilters(f => ({ ...f, fish_name: e.target.value }));
-                      if (form.lot_id) setForm({ ...form, lot_id: '' });
-                    }}
-                  />
+                    onChange={e => { setLotFilters(f => ({ ...f, fish_name: e.target.value })); if (form.lot_id) setForm({ ...form, lot_id: '' }); }} />
                 </div>
                 <div className="form-group">
                   <label>Size</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Filter by size"
+                  <input type="text" className="form-control" placeholder="Filter by size"
                     value={lotFilters.size}
-                    onChange={e => {
-                      setLotFilters(f => ({ ...f, size: e.target.value }));
-                      if (form.lot_id) setForm({ ...form, lot_id: '' });
-                    }}
-                  />
+                    onChange={e => { setLotFilters(f => ({ ...f, size: e.target.value })); if (form.lot_id) setForm({ ...form, lot_id: '' }); }} />
                 </div>
                 <div className="form-group">
                   <label>Type</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Filter by type"
+                  <input type="text" className="form-control" placeholder="Filter by type"
                     value={lotFilters.type}
-                    onChange={e => {
-                      setLotFilters(f => ({ ...f, type: e.target.value }));
-                      if (form.lot_id) setForm({ ...form, lot_id: '' });
-                    }}
-                  />
+                    onChange={e => { setLotFilters(f => ({ ...f, type: e.target.value })); if (form.lot_id) setForm({ ...form, lot_id: '' }); }} />
                 </div>
                 <div className="form-group">
                   <label>Glazing</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Filter by glazing"
+                  <input type="text" className="form-control" placeholder="Filter by glazing"
                     value={lotFilters.glazing}
-                    onChange={e => {
-                      setLotFilters(f => ({ ...f, glazing: e.target.value }));
-                      if (form.lot_id) setForm({ ...form, lot_id: '' });
-                    }}
-                  />
+                    onChange={e => { setLotFilters(f => ({ ...f, glazing: e.target.value })); if (form.lot_id) setForm({ ...form, lot_id: '' }); }} />
+                </div>
+                <div className="form-group">
+                  <label>Order Code</label>
+                  <input type="text" className="form-control" placeholder="Filter by order code"
+                    value={lotFilters.order_code}
+                    onChange={e => { setLotFilters(f => ({ ...f, order_code: e.target.value })); if (form.lot_id) setForm({ ...form, lot_id: '' }); }} />
                 </div>
               </div>
-              {/* Final single input: Lot * */}
+
+              {/* Lot selector + Location */}
               <div className="form-row">
                 <div className="form-group" ref={lotDropdownRef} style={{ position: 'relative', flex: 1 }}>
                   <label>Lot *</label>
@@ -285,63 +299,41 @@ function StockIn() {
                     autoComplete="off"
                   />
                   {lotDropdownOpen && (
-                    <ul
-                      className="lot-dropdown"
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: '100%',
-                        marginTop: 4,
-                        maxHeight: 220,
-                        overflowY: 'auto',
-                        background: 'white',
-                        border: '1px solid var(--gray-200)',
-                        borderRadius: 8,
-                        boxShadow: 'var(--shadow-lg)',
-                        zIndex: 100,
-                        listStyle: 'none',
-                        padding: 4
-                      }}
-                    >
+                    <ul className="lot-dropdown" style={{
+                      position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4,
+                      maxHeight: 220, overflowY: 'auto', background: 'white',
+                      border: '1px solid var(--gray-200)', borderRadius: 8,
+                      boxShadow: 'var(--shadow-lg)', zIndex: 100, listStyle: 'none', padding: 4
+                    }}>
                       {filteredLots.length === 0 ? (
                         <li style={{ padding: '10px 12px', color: 'var(--gray-500)', fontSize: '0.9rem' }}>No lots match (adjust filters or search)</li>
                       ) : (
                         filteredLots.map(l => (
-                          <li
-                            key={l.id}
+                          <li key={l.id}
                             onClick={() => {
                               const bulkKg = Number(l.bulk_weight_kg) || 0;
                               const qty = parseInt(form.quantity_mc, 10) || 0;
                               const autoWeight = bulkKg && qty ? (bulkKg * qty).toFixed(2) : '';
-                              setForm(prev => ({
-                                ...prev,
-                                lot_id: String(l.id),
-                                weight_kg: autoWeight
-                              }));
-                              setLotFilters({ fish_name: l.fish_name || '', size: l.size || '', type: l.type || '', glazing: l.glazing || '' });
+                              setForm(prev => ({ ...prev, lot_id: String(l.id), weight_kg: autoWeight }));
+                              setLotFilters({
+                                fish_name: l.fish_name || '', size: l.size || '',
+                                type: l.type || '', glazing: l.glazing || '',
+                                order_code: l.order_code || ''
+                              });
                               setLotSearch(getLotLabel(l));
                               setLotDropdownOpen(false);
                             }}
-                            style={{
-                              padding: '10px 12px',
-                              cursor: 'pointer',
-                              borderRadius: 6,
-                              fontSize: '0.9rem'
-                            }}
-                            onMouseEnter={e => {
-                              e.currentTarget.style.background = 'var(--gray-100)';
-                            }}
-                            onMouseLeave={e => {
-                              e.currentTarget.style.background = 'transparent';
-                            }}
+                            style={{ padding: '10px 12px', cursor: 'pointer', borderRadius: 6, fontSize: '0.9rem' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--gray-100)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                           >
                             <strong>{l.lot_no}</strong> · {l.fish_name || 'N/A'}
-                            {(l.size || l.type || l.glazing) && (
-                              <span style={{ color: 'var(--gray-600)', fontSize: '0.85rem' }}>
-                                {' '}| Size: {l.size || '–'} · Type: {l.type || '–'} · Glazing: {l.glazing || '–'}
-                              </span>
-                            )}
+                            <span style={{ color: 'var(--gray-600)', fontSize: '0.85rem' }}>
+                              {l.order_code ? ` | Order: ${l.order_code}` : ''}
+                              {l.size ? ` · Size: ${l.size}` : ''}
+                              {l.type ? ` · Type: ${l.type}` : ''}
+                              {l.glazing ? ` · Glazing: ${l.glazing}` : ''}
+                            </span>
                             <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}> ({l.cs_in_date})</span>
                           </li>
                         ))
@@ -369,8 +361,8 @@ function StockIn() {
                   <input className="form-control" type="number" min="1" value={form.quantity_mc} onChange={e => handleQtyChange(e.target.value)} placeholder="Number of cartons" required />
                 </div>
                 <div className="form-group">
-                  <label>Weight (KG) </label>
-                  <input className="form-control" type="number" step="0.01" value={form.weight_kg} readOnly placeholder="Bulk Weight (KG) × Quantity (MC)" style={{ backgroundColor: 'var(--gray-50)', cursor: 'default' }} />
+                  <label>Weight (KG)</label>
+                  <input className="form-control" type="number" step="0.01" value={form.weight_kg} readOnly placeholder="Auto-calculated" style={{ backgroundColor: 'var(--gray-50)', cursor: 'default' }} />
                 </div>
               </div>
 

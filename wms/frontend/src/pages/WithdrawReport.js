@@ -117,14 +117,18 @@ function WithdrawReport() {
                 <th>Sticker</th>
                 <th>Lines / Place</th>
                 <th>Stack No</th>
-                <th>Stack Total</th>
+                <th>Request MC</th>
                 <th className="wr-col-balance">Actual (MC)</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item, i) => (
                 <tr key={item.id}>
-                  <td className="wr-bold">{item.fish_name}</td>
+                  <td className="wr-bold">
+                    {item.stock_type === 'CONTAINER_EXTRA' && item.order_code
+                      ? `${item.fish_name} (${item.order_code})`
+                      : item.fish_name}
+                  </td>
                   <td className="wr-center">{item.size}</td>
                   <td className="wr-center">{Number(item.bulk_weight_kg)} KG</td>
                   <td className="wr-center">{item.type || ''}</td>
@@ -132,8 +136,8 @@ function WithdrawReport() {
                   <td className="wr-center">{item.sticker || ''}</td>
                   <td className="wr-center wr-bold">{item.line_place}</td>
                   <td className="wr-center">{item.stack_no || ''}</td>
-                  <td className="wr-center">{item.stack_total || ''}</td>
-                  <td className="wr-center wr-balance">{Number(item.quantity_mc)}</td>
+                  <td className="wr-center">{Number(item.requested_mc ?? item.quantity_mc)}</td>
+                  <td className="wr-center wr-balance">{Number(item.hand_on_balance ?? item.quantity_mc)}</td>
                 </tr>
               ))}
             </tbody>
@@ -151,7 +155,7 @@ function WithdrawReport() {
             </div>
             <div className="wr-summary-item">
               <span className="wr-summary-label">Actual (MC)</span>
-              <span className="wr-summary-value">{items.reduce((s, it) => s + Number(it.quantity_mc), 0)}</span>
+              <span className="wr-summary-value">{items.reduce((s, it) => s + Number(it.hand_on_balance ?? it.quantity_mc), 0)}</span>
             </div>
             <div className="wr-summary-item">
               <span className="wr-summary-label">Total KG</span>

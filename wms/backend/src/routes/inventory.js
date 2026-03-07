@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 
-// GET inventory (stock table - mirrors Excel view)
+// GET inventory (stock table - mirrors Excel view, optional ?stock_type= filter)
 router.get('/', async (req, res) => {
   try {
-    const { fish_name, location, lot_no } = req.query;
+    const { fish_name, location, lot_no, stock_type } = req.query;
     let sql = 'SELECT * FROM inventory_view WHERE 1=1';
     const params = [];
 
+    if (stock_type) { sql += ' AND stock_type = ?'; params.push(stock_type); }
     if (fish_name) { sql += ' AND fish_name LIKE ?'; params.push(`%${fish_name}%`); }
     if (location) { sql += ' AND line_place LIKE ?'; params.push(`%${location}%`); }
     if (lot_no) { sql += ' AND lot_no LIKE ?'; params.push(`%${lot_no}%`); }
@@ -58,6 +59,65 @@ router.get('/dashboard', async (req, res) => {
   } catch (error) {
     console.error('Error fetching dashboard:', error);
     res.status(500).json({ error: 'Failed to fetch dashboard data' });
+  }
+});
+
+// DELETE all stock data for a given stock_type (movements + lots)
+router.delete('/all', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { stock_type } = req.query;
+    if (!stock_type) {
+      return res.status(400).json({ error: 'stock_type query param is required' });
+    }
+
+    await conn.beginTransaction();
+
+    // Find all lots linked to products of this stock_type
+    const [lots] = await conn.query(
+      'SELECT l.id FROM lots l JOIN products p ON l.product_id = p.id WHERE p.stock_type = ?',
+      [stock_type]
+    );
+    const lotIds = lots.map(l => l.id);
+
+    let movementsDeleted = 0;
+    let lotsDeleted = 0;
+
+    if (lotIds.length > 0) {
+      // Delete withdraw_items referencing these lots
+      await conn.query(
+        `DELETE FROM withdraw_items WHERE lot_id IN (${lotIds.map(() => '?').join(',')})`,
+        lotIds
+      );
+
+      // Delete movements for these lots
+      const [mResult] = await conn.query(
+        `DELETE FROM movements WHERE lot_id IN (${lotIds.map(() => '?').join(',')})`,
+        lotIds
+      );
+      movementsDeleted = mResult.affectedRows;
+
+      // Delete the lots themselves
+      const [lResult] = await conn.query(
+        `DELETE FROM lots WHERE id IN (${lotIds.map(() => '?').join(',')})`,
+        lotIds
+      );
+      lotsDeleted = lResult.affectedRows;
+    }
+
+    await conn.commit();
+
+    res.json({
+      message: `Deleted ${movementsDeleted} movements and ${lotsDeleted} lots for ${stock_type}`,
+      movements_deleted: movementsDeleted,
+      lots_deleted: lotsDeleted
+    });
+  } catch (error) {
+    await conn.rollback();
+    console.error('Error deleting stock data:', error);
+    res.status(500).json({ error: 'Failed to delete stock data' });
+  } finally {
+    conn.release();
   }
 });
 

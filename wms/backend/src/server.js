@@ -7,10 +7,10 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// Middleware (raise limit for Send Email with PDF base64 - can be ~20MB+)
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '30mb' }));
+app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -26,6 +26,8 @@ app.use('/api/movements', require('./routes/movements'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/upload', require('./routes/upload'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
+app.use('/api/settings', require('./routes/settings'));
+app.use('/api/reports', require('./routes/reports'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -38,13 +38,33 @@ async function initDatabase() {
         bulk_weight_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
         type VARCHAR(50) DEFAULT NULL,
         glazing VARCHAR(50) DEFAULT NULL,
+        stock_type ENUM('BULK','CONTAINER_EXTRA') NOT NULL DEFAULT 'BULK',
+        order_code VARCHAR(50) DEFAULT NULL,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        UNIQUE KEY uq_product (fish_name, size, type, glazing)
+        UNIQUE KEY uq_product (fish_name, size, type, glazing, stock_type, order_code)
       ) ENGINE=InnoDB
     `);
     console.log('  Table created: products');
+
+    // Migration: add stock_type and order_code columns to products
+    try {
+      const [stCols] = await connection.query(`
+        SELECT COLUMN_NAME FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' AND COLUMN_NAME = 'stock_type'
+      `, [dbName]);
+      if (stCols.length === 0) {
+        await connection.query("ALTER TABLE products ADD COLUMN stock_type ENUM('BULK','CONTAINER_EXTRA') NOT NULL DEFAULT 'BULK' AFTER glazing");
+        await connection.query("ALTER TABLE products ADD COLUMN order_code VARCHAR(50) DEFAULT NULL AFTER stock_type");
+        // Rebuild unique key to include stock_type and order_code
+        try { await connection.query('ALTER TABLE products DROP INDEX uq_product'); } catch (e) { /* ignore */ }
+        await connection.query('ALTER TABLE products ADD UNIQUE KEY uq_product (fish_name, size, type, glazing, stock_type, order_code)');
+        console.log('  Migration: added stock_type, order_code to products');
+      }
+    } catch (e) {
+      // ignore migration errors
+    }
 
     // Location uniqueness is by line_place ONLY
     // The same location code (e.g. A03r-2) can hold many products but is ONE location
@@ -91,12 +111,33 @@ async function initDatabase() {
         sticker VARCHAR(100) DEFAULT NULL,
         product_id INT NOT NULL,
         notes TEXT DEFAULT NULL,
+        production_date DATE DEFAULT NULL,
+        expiration_date DATE DEFAULT NULL,
+        st_no VARCHAR(50) DEFAULT NULL,
+        remark TEXT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (product_id) REFERENCES products(id) ON UPDATE CASCADE
       ) ENGINE=InnoDB
     `);
     console.log('  Table created: lots');
+
+    // Migration: add container-extra fields to lots
+    try {
+      const [pdCols] = await connection.query(`
+        SELECT COLUMN_NAME FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'lots' AND COLUMN_NAME = 'production_date'
+      `, [dbName]);
+      if (pdCols.length === 0) {
+        await connection.query('ALTER TABLE lots ADD COLUMN production_date DATE DEFAULT NULL AFTER notes');
+        await connection.query('ALTER TABLE lots ADD COLUMN expiration_date DATE DEFAULT NULL AFTER production_date');
+        await connection.query('ALTER TABLE lots ADD COLUMN st_no VARCHAR(50) DEFAULT NULL AFTER expiration_date');
+        await connection.query('ALTER TABLE lots ADD COLUMN remark TEXT DEFAULT NULL AFTER st_no');
+        console.log('  Migration: added production_date, expiration_date, st_no, remark to lots');
+      }
+    } catch (e) {
+      // ignore migration errors
+    }
 
     await connection.query(`
       CREATE TABLE IF NOT EXISTS movements (
@@ -130,10 +171,16 @@ async function initDatabase() {
         p.bulk_weight_kg,
         p.type,
         p.glazing,
+        p.stock_type,
+        p.order_code,
         l.id AS lot_id,
         l.lot_no,
         l.cs_in_date,
         l.sticker,
+        l.production_date,
+        l.expiration_date,
+        l.st_no,
+        l.remark,
         loc.id AS location_id,
         loc.line_place,
         loc.stack_no,

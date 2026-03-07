@@ -52,17 +52,17 @@ export function getAllLocationCodes(warehouseId) {
   return codes;
 }
 
-// Helper: Parse a location code like "A01R-1" into parts
+// Helper: Parse a location code like "A01R-1" or "CC01-1" into parts
 export function parseLocationCode(code) {
   if (!code) return null;
   const upper = code.toUpperCase().trim();
-  // Match patterns like: A01R-1, AA03L-2, A01R, DD08L, F04R, F08R, F01L, F01R
-  const match = upper.match(/^([A-Z]{1,2})(\d{1,2})([LR])(?:-(\d+))?$/);
+  // Match patterns: A01R-1, AA03L-2, A01R, DD08L  — and also CC01-1 (no L/R side)
+  const match = upper.match(/^([A-Z]{1,2})(\d{1,2})([LR])?(?:-(\d+))?$/);
   if (!match) return null;
   return {
     line: match[1],
     position: parseInt(match[2]),
-    side: match[3], // L or R
+    side: match[3] || 'L',
     level: match[4] ? parseInt(match[4]) : null,
     raw: upper
   };

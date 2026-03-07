@@ -10,6 +10,9 @@ node_modules/
 frontend/build/
 dist/
 
+# Uploaded files (do not commit)
+backend/uploads/
+
 # Logs
 *.log
 npm-debug.log*

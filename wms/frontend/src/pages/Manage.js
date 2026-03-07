@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FiSettings, FiSearch, FiCheck, FiClock, FiTruck, FiPackage,
@@ -25,6 +25,7 @@ function Manage() {
   const [expandedData, setExpandedData] = useState(null);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterDept, setFilterDept] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
   const [search, setSearch] = useState('');
   const [processing, setProcessing] = useState(null);
   const [editedQty, setEditedQty] = useState({});   // { itemId: newQty }
@@ -37,6 +38,7 @@ function Manage() {
       const params = {};
       if (filterStatus) params.status = filterStatus;
       if (filterDept) params.department = filterDept;
+      if (dateFilter) params.date = dateFilter;
       const res = await getWithdrawals(params);
       setRequests(res.data);
     } catch (err) {
@@ -44,7 +46,7 @@ function Manage() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterDept]);
+  }, [filterStatus, filterDept, dateFilter]);
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
@@ -159,6 +161,20 @@ function Manage() {
            (r.requested_by && r.requested_by.toLowerCase().includes(q));
   });
 
+  // Group by day for day-by-day display
+  const requestsByDay = useMemo(() => {
+    const groups = {};
+    filtered.forEach(req => {
+      const raw = req.withdraw_date || req.created_at;
+      const d = raw ? new Date(raw) : new Date();
+      const dateKey = d.toISOString().slice(0, 10);
+      const dateLabel = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      if (!groups[dateKey]) groups[dateKey] = { dateKey, dateLabel, requests: [] };
+      groups[dateKey].requests.push(req);
+    });
+    return Object.values(groups).sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+  }, [filtered]);
+
   // Count by status
   const counts = requests.reduce((acc, r) => {
     acc[r.status] = (acc[r.status] || 0) + 1;
@@ -208,16 +224,46 @@ function Manage() {
           </select>
         </div>
 
-        {/* Request list */}
+        {/* Date filter — find by date */}
+        <div className="mg-date-bar">
+          <label className="mg-date-label">Date:</label>
+          <input
+            type="date"
+            className="form-control mg-date-input"
+            value={dateFilter}
+            onChange={e => setDateFilter(e.target.value)}
+            title="Filter by request date"
+          />
+          <div className="mg-date-quick">
+            {(() => {
+              const todayStr = new Date().toISOString().slice(0, 10);
+              const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+              const yesterdayStr = yesterday.toISOString().slice(0, 10);
+              return (
+                <>
+                  <button type="button" className={`mg-date-btn ${!dateFilter ? 'active' : ''}`} onClick={() => setDateFilter('')}>All</button>
+                  <button type="button" className={`mg-date-btn ${dateFilter === todayStr ? 'active' : ''}`} onClick={() => setDateFilter(todayStr)}>Today</button>
+                  <button type="button" className={`mg-date-btn ${dateFilter === yesterdayStr ? 'active' : ''}`} onClick={() => setDateFilter(yesterdayStr)}>Yesterday</button>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Request list — day by day */}
         {loading ? (
           <div className="loading"><div className="spinner"></div></div>
         ) : filtered.length === 0 ? (
           <div className="empty-state" style={{ padding: 60, textAlign: 'center', color: 'var(--gray-400)' }}>
-            No withdrawal requests found
+            {dateFilter ? `No requests found for ${new Date(dateFilter + 'T12:00:00').toLocaleDateString(undefined, { dateStyle: 'medium' })}` : 'No withdrawal requests found'}
           </div>
         ) : (
-          <div className="mg-requests">
-            {filtered.map(req => {
+          <div className="mg-requests-by-day">
+            {requestsByDay.map(dayGroup => (
+              <div key={dayGroup.dateKey} className="mg-day-section">
+                <h3 className="mg-day-heading">{dayGroup.dateLabel}</h3>
+                <div className="mg-requests">
+                  {dayGroup.requests.map(req => {
               const config = STATUS_CONFIG[req.status];
               const isExpanded = expandedId === req.id;
               const isProcessing = processing === req.id;
@@ -435,7 +481,10 @@ function Manage() {
                   )}
                 </div>
               );
-            })}
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

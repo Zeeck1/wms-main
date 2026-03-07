@@ -212,12 +212,14 @@ function WithdrawForm() {
                 const requestedMc = Number(item.requested_mc || item.quantity_mc);
                 const actualMc = Number(item.quantity_mc);
                 const netKg = actualMc * Number(item.bulk_weight_kg);
+                const isExtra = (item.stock_type || 'BULK') === 'CONTAINER_EXTRA';
+                const originDisplay = isExtra ? (item.order_code || 'EXTRA') : 'SCK';
                 // Only show actual/weight after manager has confirmed (status past PENDING)
                 const showActual = data.status !== 'PENDING';
                 return (
                   <tr key={item.id}>
                     <td className="wf-center">{i + 1}</td>
-                    <td className="wf-center">SCK</td>
+                    <td className="wf-center">{originDisplay}</td>
                     <td>{item.fish_name}{item.type ? `/${item.type}` : ''}{item.glazing ? `(${item.glazing})` : ''}</td>
                     <td className="wf-center">{item.size}</td>
                     <td className="wf-center wf-bold">{requestedMc}</td>

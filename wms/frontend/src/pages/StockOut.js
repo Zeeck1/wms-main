@@ -1,9 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { FiArrowUpCircle } from 'react-icons/fi';
+import React, { useState, useEffect, useCallback } from 'react';
+import { FiArrowUpCircle, FiPackage, FiBox } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { getInventory, stockOut } from '../services/api';
 
+const TABS = [
+  { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
+  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> }
+];
+
 function StockOut() {
+  const [activeTab, setActiveTab] = useState('BULK');
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -16,17 +22,25 @@ function StockOut() {
     notes: ''
   });
 
-  useEffect(() => { fetchInventory(); }, []);
+  const isCE = activeTab === 'CONTAINER_EXTRA';
 
-  const fetchInventory = async () => {
+  const fetchInventory = useCallback(async () => {
     try {
-      const res = await getInventory();
+      const res = await getInventory({ stock_type: activeTab });
       setInventory(res.data);
     } catch (err) {
       toast.error('Failed to load inventory');
     } finally {
       setLoading(false);
     }
+  }, [activeTab]);
+
+  useEffect(() => { setLoading(true); fetchInventory(); }, [activeTab, fetchInventory]);
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setSelectedRow(null);
+    setForm({ quantity_mc: '', weight_kg: '', reference_no: '', notes: '' });
   };
 
   const selectItem = (item) => {
@@ -52,9 +66,7 @@ function StockOut() {
 
     setSubmitting(true);
     try {
-      // We need lot_id - fetch it from the inventory data
-      // The inventory_view doesn't expose lot_id directly, so we use lot_no to find it
-      const res = await stockOut({
+      await stockOut({
         lot_id: selectedRow.lot_id,
         location_id: selectedRow.location_id,
         quantity_mc: parseInt(form.quantity_mc),
@@ -81,6 +93,18 @@ function StockOut() {
         <h2><FiArrowUpCircle style={{ color: 'var(--danger)' }} /> Stock OUT (Loading)</h2>
       </div>
       <div className="page-body">
+        <div className="stock-type-tabs">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              className={`stock-type-tab ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => handleTabChange(tab.id)}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+
         {selectedRow && (
           <div className="card" style={{ marginBottom: 20, maxWidth: 720 }}>
             <div className="card-header">
@@ -89,8 +113,10 @@ function StockOut() {
             </div>
             <div className="card-body">
               <div className="alert alert-warning">
-                <strong>{selectedRow.fish_name}</strong> ({selectedRow.size}) | 
-                Lot: {selectedRow.lot_no} | Location: {selectedRow.line_place} | 
+                {isCE && selectedRow.order_code && <><strong>{selectedRow.order_code}</strong> — </>}
+                <strong>{selectedRow.fish_name}</strong> ({selectedRow.size}) |
+                {!isCE && <> Lot: {selectedRow.lot_no} |</>}
+                {' '}Location: {selectedRow.line_place} |
                 <strong> Hand On: {selectedRow.hand_on_balance_mc} MC</strong>
               </div>
               <form onSubmit={handleStockOut}>
@@ -124,15 +150,16 @@ function StockOut() {
 
         <div className="card">
           <div className="card-header">
-            <h3>Select Item to Stock Out</h3>
+            <h3>Select Item to Stock Out ({isCE ? 'Container Extra' : 'Bulk'})</h3>
           </div>
           <div className="table-container">
             <table className="excel-table">
               <thead>
                 <tr>
+                  {isCE && <th>Order</th>}
                   <th>Fish Name</th>
                   <th>Size</th>
-                  <th>Lot No</th>
+                  {!isCE && <th>Lot No</th>}
                   <th>Location</th>
                   <th>Hand On (MC)</th>
                   <th>Hand On (KG)</th>
@@ -141,12 +168,13 @@ function StockOut() {
               </thead>
               <tbody>
                 {inventory.length === 0 ? (
-                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: 40, color: '#999' }}>No stock available</td></tr>
+                  <tr><td colSpan={isCE ? 7 : 7} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No stock available</td></tr>
                 ) : inventory.map((item, i) => (
                   <tr key={i} style={{ background: selectedRow === item ? '#dbeafe' : undefined, cursor: 'pointer' }} onClick={() => selectItem(item)}>
+                    {isCE && <td><strong>{item.order_code || '-'}</strong></td>}
                     <td><strong>{item.fish_name}</strong></td>
                     <td>{item.size}</td>
-                    <td>{item.lot_no}</td>
+                    {!isCE && <td>{item.lot_no}</td>}
                     <td>{item.line_place}</td>
                     <td className="num-cell"><strong>{item.hand_on_balance_mc}</strong></td>
                     <td className="num-cell">{Number(item.hand_on_balance_kg).toFixed(2)}</td>

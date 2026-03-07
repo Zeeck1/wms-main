@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { FiLayers, FiArrowLeft, FiBox, FiMaximize2, FiMinimize2, FiEye, FiMapPin } from 'react-icons/fi';
+import { FiLayers, FiArrowLeft, FiMaximize2, FiMinimize2, FiEye, FiMapPin, FiBox } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { getInventory } from '../services/api';
 import { WAREHOUSES, parseLocationCode } from '../config/warehouseConfig';
 
-// KG thresholds for occupancy levels (applied to calculated total KG = MC × bulk_weight_kg)
 const OCC_FULL_MIN = 860;
 const OCC_MEDIUM_MIN = 500;
 
@@ -13,24 +12,18 @@ function LocationLayout() {
   const [loading, setLoading] = useState(true);
   const [selectedWarehouse, setSelectedWarehouse] = useState('CS-3');
   const [selectedLine, setSelectedLine] = useState(null);
-  const [selectedSide, setSelectedSide] = useState(null); // 'L' or 'R'
+  const [selectedSide, setSelectedSide] = useState(null);
   const [hoveredCell, setHoveredCell] = useState(null);
   const [viewMode, setViewMode] = useState('3d');
 
   const wh = WAREHOUSES[selectedWarehouse];
 
-  useEffect(() => { fetchInventory(); }, []);
-
-  const fetchInventory = async () => {
-    try {
-      const res = await getInventory();
-      setInventory(res.data);
-    } catch (err) {
-      toast.error('Failed to load inventory');
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    getInventory()
+      .then(res => setInventory(res.data))
+      .catch(() => toast.error('Failed to load inventory'))
+      .finally(() => setLoading(false));
+  }, []);
 
   const occupancyMap = useMemo(() => {
     const map = {};
@@ -40,24 +33,15 @@ function LocationLayout() {
       const mc = Number(item.hand_on_balance_mc) || 0;
       const bulkKg = Number(item.bulk_weight_kg) || 0;
       const totalKg = mc * bulkKg;
-      const productInfo = {
-        fish: item.fish_name,
-        size: item.size,
-        qty: mc,
-        bulkKg,
-        totalKg,
-        lot: item.lot_no,
-        location: item.line_place
-      };
+      const orderCode = item.order_code || '';
+      const productInfo = { fish: item.fish_name, size: item.size, qty: mc, bulkKg, totalKg, lot: item.lot_no, location: item.line_place, orderCode, stockType: item.stock_type };
 
-      // Per-position aggregate (overview)
       const posKey = `${parsed.line}-${parsed.position}-${parsed.side}`;
       if (!map[posKey]) map[posKey] = { qty: 0, kg: 0, products: [], line: parsed.line };
       map[posKey].qty += mc;
       map[posKey].kg += totalKg;
       map[posKey].products.push(productInfo);
 
-      // Per-level (detail view)
       if (parsed.level) {
         const levelKey = `${parsed.line}-${parsed.position}-${parsed.side}-${parsed.level}`;
         if (!map[levelKey]) map[levelKey] = { qty: 0, kg: 0, products: [], line: parsed.line, level: parsed.level };
@@ -66,7 +50,6 @@ function LocationLayout() {
         map[levelKey].products.push(productInfo);
       }
 
-      // Per-line aggregate
       const lineKey = `LINE-${parsed.line}`;
       if (!map[lineKey]) map[lineKey] = { qty: 0, kg: 0, count: 0 };
       map[lineKey].qty += mc;
@@ -93,18 +76,9 @@ function LocationLayout() {
   const getPosData = (line, pos, side) => occupancyMap[`${line}-${pos}-${side}`] || null;
   const getLevelData = (line, pos, side, level) => occupancyMap[`${line}-${pos}-${side}-${level}`] || null;
 
-  // Navigate to detail view for a specific line + side
-  const openDetail = (line, side) => {
-    setSelectedLine(line);
-    setSelectedSide(side);
-  };
+  const openDetail = (line, side) => { setSelectedLine(line); setSelectedSide(side); };
+  const closeDetail = () => { setSelectedLine(null); setSelectedSide(null); };
 
-  const closeDetail = () => {
-    setSelectedLine(null);
-    setSelectedSide(null);
-  };
-
-  // ─── Render a single rack section (array of 3D cells) ───
   const renderRack = (line, side, count, reversed, clickSide) => {
     const positions = Array.from({ length: count }, (_, i) => i + 1);
     if (reversed) positions.reverse();
@@ -113,13 +87,10 @@ function LocationLayout() {
       const kg = data ? data.kg : 0;
       const occ = getOccupancyFromKg(kg);
       return (
-        <div
-          key={`${line}-${side}${pos}`}
-          className={`wh-cell wh-occ-${occ}`}
+        <div key={`${line}-${side}${pos}`} className={`wh-cell wh-occ-${occ}`}
           onMouseEnter={() => setHoveredCell({ line, pos, side })}
           onMouseLeave={() => setHoveredCell(null)}
-          onClick={(e) => { e.stopPropagation(); openDetail(line, clickSide); }}
-        >
+          onClick={(e) => { e.stopPropagation(); openDetail(line, clickSide); }}>
           <div className="wh-cell-top"></div>
           <div className="wh-cell-front"></div>
           <div className="wh-cell-side"></div>
@@ -128,7 +99,7 @@ function LocationLayout() {
     });
   };
 
-  // ─── 3D Overview ───────────────────────────────────
+  // ── 3D Overview ──
   const render3DOverview = () => {
     const leftLines = [...wh.leftLines].reverse();
     const rightLines = [...wh.rightLines].reverse();
@@ -141,12 +112,9 @@ function LocationLayout() {
           <span className="wh-legend-item"><span className="wh-dot wh-dot-medium"></span> Medium (500-860 KG)</span>
           <span className="wh-legend-item"><span className="wh-dot wh-dot-full"></span> Full (860+ KG)</span>
         </div>
-
         <div className={`wh-scene ${viewMode === '3d' ? 'wh-scene-3d' : 'wh-scene-2d'}`}>
           <div className="wh-warehouse-title">{wh.name} ({wh.id})</div>
-
           <div className="wh-two-sides">
-            {/* ═══ LEFT GROUP (A-O) ═══ */}
             <div className="wh-group wh-group-left">
               <div className="wh-group-header">
                 <span className="wh-gh-section">Left (Long) 8x4</span>
@@ -159,29 +127,19 @@ function LocationLayout() {
                   const hasStock = lineData && lineData.count > 0;
                   return (
                     <div key={line} className={`wh-row ${hasStock ? 'wh-row-active' : ''}`}>
-                      <div className="wh-rack wh-rack-8" onClick={() => openDetail(line, 'L')}>
-                        {renderRack(line, 'L', 8, false, 'L')}
-                      </div>
-                      <div className="wh-row-label">
-                        <span className="wh-line-label">{line}</span>
-                      </div>
-                      <div className="wh-rack wh-rack-4" onClick={() => openDetail(line, 'R')}>
-                        {renderRack(line, 'R', 4, true, 'R')}
-                      </div>
+                      <div className="wh-rack wh-rack-8" onClick={() => openDetail(line, 'L')}>{renderRack(line, 'L', 8, false, 'L')}</div>
+                      <div className="wh-row-label"><span className="wh-line-label">{line}</span></div>
+                      <div className="wh-rack wh-rack-4" onClick={() => openDetail(line, 'R')}>{renderRack(line, 'R', 4, true, 'R')}</div>
                     </div>
                   );
                 })}
               </div>
             </div>
-
-            {/* ═══ CENTRAL AISLE ═══ */}
             <div className="wh-central-aisle">
               <div className="wh-aisle-stripe"></div>
               <span className="wh-aisle-text">A I S L E</span>
               <div className="wh-aisle-stripe"></div>
             </div>
-
-            {/* ═══ RIGHT GROUP (P-DD) ═══ */}
             <div className="wh-group wh-group-right">
               <div className="wh-group-header">
                 <span className="wh-gh-section">Left (Short) 4x4</span>
@@ -194,22 +152,15 @@ function LocationLayout() {
                   const hasStock = lineData && lineData.count > 0;
                   return (
                     <div key={line} className={`wh-row ${hasStock ? 'wh-row-active' : ''}`}>
-                      <div className="wh-rack wh-rack-4" onClick={() => openDetail(line, 'L')}>
-                        {renderRack(line, 'L', 4, false, 'L')}
-                      </div>
-                      <div className="wh-row-label">
-                        <span className="wh-line-label">{line}</span>
-                      </div>
-                      <div className="wh-rack wh-rack-8" onClick={() => openDetail(line, 'R')}>
-                        {renderRack(line, 'R', 8, true, 'R')}
-                      </div>
+                      <div className="wh-rack wh-rack-4" onClick={() => openDetail(line, 'L')}>{renderRack(line, 'L', 4, false, 'L')}</div>
+                      <div className="wh-row-label"><span className="wh-line-label">{line}</span></div>
+                      <div className="wh-rack wh-rack-8" onClick={() => openDetail(line, 'R')}>{renderRack(line, 'R', 8, true, 'R')}</div>
                     </div>
                   );
                 })}
               </div>
             </div>
           </div>
-
           <div className="wh-pos-indicators">
             <span>01 (Wall)</span>
             <span>01 (Aisle) →</span>
@@ -217,8 +168,6 @@ function LocationLayout() {
             <span>(Wall) 01</span>
           </div>
         </div>
-
-        {/* Tooltip */}
         {hoveredCell && (
           <div className="wh-tooltip">
             <strong>{hoveredCell.line}{String(hoveredCell.pos).padStart(2, '0')}{hoveredCell.side}</strong>
@@ -229,13 +178,9 @@ function LocationLayout() {
               return (
                 <>
                   <span>{data.qty} MC / {data.kg.toFixed(0)} KG</span>
-                  <span className={`badge badge-occ-${label === 'Full' ? 'full' : label === 'Medium' ? 'med' : 'low'}`}>
-                    {label}
-                  </span>
+                  <span className={`badge badge-occ-${label === 'Full' ? 'full' : label === 'Medium' ? 'med' : 'low'}`}>{label}</span>
                   {data.products.slice(0, 3).map((p, i) => (
-                    <span key={i} className="wh-tooltip-product">
-                      {p.fish} ({p.qty} MC × {p.bulkKg} KG = {p.totalKg.toFixed(0)} KG)
-                    </span>
+                    <span key={i} className="wh-tooltip-product">{p.orderCode ? `[${p.orderCode}] ` : ''}{p.fish} ({p.qty} MC × {p.bulkKg} KG = {p.totalKg.toFixed(0)} KG)</span>
                   ))}
                   {data.products.length > 3 && <span>+{data.products.length - 3} more</span>}
                 </>
@@ -247,13 +192,11 @@ function LocationLayout() {
     );
   };
 
-  // ─── Line Detail View (single side only) ───────────
+  // ── Line Detail View ──
   const renderLineDetail = () => {
     const line = selectedLine;
     const side = selectedSide;
     const isLeftGroup = wh.leftLines.includes(line);
-
-    // Get section config for the selected side
     let section;
     if (isLeftGroup) {
       section = side === 'L'
@@ -265,20 +208,13 @@ function LocationLayout() {
         : { id: 'RL', label: 'Right (Long)', side: 'R', positions: 8, levels: 4, desc: '8x4/15' };
     }
 
-    // Collect all occupied levels for this section to build product cards
     const levelGroups = {};
     for (let p = 1; p <= section.positions; p++) {
       for (let lv = 1; lv <= section.levels; lv++) {
         const lvData = getLevelData(line, p, section.side, lv);
         if (lvData && lvData.qty > 0) {
           const locCode = `${line}${String(p).padStart(2, '0')}${section.side}-${lv}`;
-          levelGroups[locCode] = {
-            pos: p,
-            level: lv,
-            data: lvData,
-            occ: getOccupancyFromKg(lvData.kg),
-            label: getOccupancyLabel(lvData.kg)
-          };
+          levelGroups[locCode] = { pos: p, level: lv, data: lvData, occ: getOccupancyFromKg(lvData.kg), label: getOccupancyLabel(lvData.kg) };
         }
       }
     }
@@ -288,16 +224,10 @@ function LocationLayout() {
     return (
       <div className="wh-detail">
         <div className="wh-detail-header">
-          <button className="btn btn-outline" onClick={closeDetail}>
-            <FiArrowLeft /> Back to Overview
-          </button>
-          <h3>
-            Line {line} — {sideLabel} Side ({section.label})
-          </h3>
+          <button className="btn btn-outline" onClick={closeDetail}><FiArrowLeft /> Back to Overview</button>
+          <h3>Line {line} — {sideLabel} Side ({section.label})</h3>
           <span className="wh-detail-badge">{section.desc}</span>
         </div>
-
-        {/* Rack grid */}
         <div className="wh-detail-section">
           <div className="wh-detail-rack">
             <div className="wh-detail-level-labels">
@@ -307,14 +237,12 @@ function LocationLayout() {
               ))}
               <div className="wh-detail-level-label wh-detail-kg-col">Total KG</div>
             </div>
-
             {Array.from({ length: section.positions }, (_, p) => {
               const pos = p + 1;
               const posStr = String(pos).padStart(2, '0');
               const posData = getPosData(line, pos, section.side);
               const posTotalKg = posData ? posData.kg : 0;
               const posOcc = getOccupancyFromKg(posTotalKg);
-
               return (
                 <div key={pos} className="wh-detail-pos-row">
                   <div className="wh-detail-pos-label">{line}{posStr}{section.side}</div>
@@ -325,13 +253,8 @@ function LocationLayout() {
                     const lvOcc = getOccupancyFromKg(lvKg);
                     const hasData = lvData && lvData.qty > 0;
                     return (
-                      <div
-                        key={level}
-                        className={`wh-detail-cell wh-detail-occ-${lvOcc}`}
-                        title={hasData
-                          ? `${line}${posStr}${section.side}-${level}: ${lvKg.toFixed(0)} KG (${getOccupancyLabel(lvKg)})`
-                          : `${line}${posStr}${section.side}-${level}: Empty`}
-                      >
+                      <div key={level} className={`wh-detail-cell wh-detail-occ-${lvOcc}`}
+                        title={hasData ? `${line}${posStr}${section.side}-${level}: ${lvKg.toFixed(0)} KG (${getOccupancyLabel(lvKg)})` : `${line}${posStr}${section.side}-${level}: Empty`}>
                         {hasData && (
                           <div className="wh-detail-cell-content">
                             <span className="wh-detail-qty">{lvData.qty}</span>
@@ -346,9 +269,7 @@ function LocationLayout() {
                     {posTotalKg > 0 ? (
                       <div className="wh-detail-cell-content">
                         <strong>{posTotalKg.toFixed(0)}</strong>
-                        <span className={`wh-detail-occ-badge wh-detail-occ-badge-${posOcc}`}>
-                          {getOccupancyLabel(posTotalKg)}
-                        </span>
+                        <span className={`wh-detail-occ-badge wh-detail-occ-badge-${posOcc}`}>{getOccupancyLabel(posTotalKg)}</span>
                       </div>
                     ) : (
                       <span style={{ color: 'var(--gray-400)' }}>-</span>
@@ -359,39 +280,28 @@ function LocationLayout() {
             })}
           </div>
         </div>
-
-        {/* ─── Stored Products — grouped by location-level ─── */}
         {Object.keys(levelGroups).length > 0 && (
           <div className="wh-products-section">
-            <h4 className="wh-products-title">
-              <FiBox /> Stored Products — Line {line} {sideLabel} ({section.side})
-            </h4>
+            <h4 className="wh-products-title"><FiBox /> Stored Products — Line {line} {sideLabel} ({section.side})</h4>
             <div className="wh-product-cards">
               {Object.entries(levelGroups).map(([locCode, group]) => (
                 <div key={locCode} className={`wh-product-card wh-product-card-occ-${group.occ}`}>
                   <div className="wh-product-card-header">
-                    <div className="wh-product-card-loc">
-                      <FiMapPin />
-                      <span className="wh-product-card-code">{locCode}</span>
-                    </div>
+                    <div className="wh-product-card-loc"><FiMapPin /><span className="wh-product-card-code">{locCode}</span></div>
                     <div className="wh-product-card-summary">
                       <span className="wh-product-card-kg">{group.data.kg.toFixed(0)} KG</span>
-                      <span className={`wh-product-card-badge wh-product-card-badge-${group.occ}`}>
-                        {group.label}
-                      </span>
+                      <span className={`wh-product-card-badge wh-product-card-badge-${group.occ}`}>{group.label}</span>
                     </div>
                   </div>
                   <div className="wh-product-card-body">
                     {group.data.products.map((prod, i) => (
                       <div key={i} className="wh-product-card-item">
                         <div className="wh-product-card-item-main">
-                          <span className="wh-product-card-fish">{prod.fish}</span>
+                          <span className="wh-product-card-fish">{prod.orderCode ? `[${prod.orderCode}] ` : ''}{prod.fish}</span>
                           <span className="wh-product-card-size">{prod.size}</span>
                         </div>
                         <div className="wh-product-card-item-detail">
-                          <span className="wh-product-card-calc">
-                            {prod.qty} MC × {prod.bulkKg} KG = <strong>{prod.totalKg.toFixed(0)} KG</strong>
-                          </span>
+                          <span className="wh-product-card-calc">{prod.qty} MC × {prod.bulkKg} KG = <strong>{prod.totalKg.toFixed(0)} KG</strong></span>
                           <span className="wh-product-card-lot">Lot: {prod.lot}</span>
                         </div>
                       </div>
@@ -417,29 +327,22 @@ function LocationLayout() {
       <div className="page-header">
         <h2><FiLayers /> Location Layout</h2>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <select
-            className="form-control"
-            style={{ width: 'auto', minWidth: 140 }}
+          <select className="form-control" style={{ width: 'auto', minWidth: 140 }}
             value={selectedWarehouse}
-            onChange={e => { setSelectedWarehouse(e.target.value); closeDetail(); }}
-          >
+            onChange={e => { setSelectedWarehouse(e.target.value); closeDetail(); }}>
             {Object.keys(WAREHOUSES).map(id => (
               <option key={id} value={id}>{WAREHOUSES[id].name}</option>
             ))}
           </select>
           {!selectedLine && (
-            <button
-              className={`btn ${viewMode === '3d' ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setViewMode(viewMode === '3d' ? '2d' : '3d')}
-            >
+            <button className={`btn ${viewMode === '3d' ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setViewMode(viewMode === '3d' ? '2d' : '3d')}>
               {viewMode === '3d' ? <FiMinimize2 /> : <FiMaximize2 />}
               {viewMode === '3d' ? '3D' : '2D'}
             </button>
           )}
           {selectedLine && (
-            <button className="btn btn-outline" onClick={closeDetail}>
-              <FiEye /> Overview
-            </button>
+            <button className="btn btn-outline" onClick={closeDetail}><FiEye /> Overview</button>
           )}
         </div>
       </div>

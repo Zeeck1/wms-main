@@ -5,7 +5,7 @@ const pool = require('../config/db');
 // ─── GET all withdrawal requests ─────────────────────
 router.get('/', async (req, res) => {
   try {
-    const { department, status } = req.query;
+    const { department, status, date } = req.query;
     let sql = `
       SELECT wr.*,
         (SELECT COUNT(*) FROM withdraw_items wi WHERE wi.request_id = wr.id) AS item_count,
@@ -22,6 +22,7 @@ router.get('/', async (req, res) => {
     const params = [];
     if (department) { sql += ' AND wr.department = ?'; params.push(department); }
     if (status) { sql += ' AND wr.status = ?'; params.push(status); }
+    if (date) { sql += ' AND DATE(COALESCE(wr.withdraw_date, wr.created_at)) = ?'; params.push(date); }
     sql += ' ORDER BY wr.created_at DESC';
     const [rows] = await pool.query(sql, params);
     res.json(rows);
@@ -40,7 +41,7 @@ router.get('/:id', async (req, res) => {
     const [items] = await pool.query(`
       SELECT wi.*,
         l.lot_no, l.cs_in_date, l.sticker,
-        p.fish_name, p.size, p.bulk_weight_kg, p.type, p.glazing,
+        p.fish_name, p.size, p.bulk_weight_kg, p.type, p.glazing, p.stock_type, p.order_code,
         loc.line_place, loc.stack_no, loc.stack_total,
         (
           COALESCE(SUM(CASE WHEN m.movement_type = 'IN' THEN m.quantity_mc ELSE 0 END), 0) -
@@ -53,7 +54,7 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN movements m ON m.lot_id = wi.lot_id AND m.location_id = wi.location_id
       WHERE wi.request_id = ?
       GROUP BY wi.id, l.lot_no, l.cs_in_date, l.sticker,
-               p.fish_name, p.size, p.bulk_weight_kg, p.type, p.glazing,
+               p.fish_name, p.size, p.bulk_weight_kg, p.type, p.glazing, p.stock_type, p.order_code,
                loc.line_place, loc.stack_no, loc.stack_total
     `, [req.params.id]);
 
