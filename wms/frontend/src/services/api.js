@@ -66,14 +66,46 @@ export const uploadContainerExtra = (file) => {
   });
 };
 
+export const uploadImport = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/upload/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+};
+
 // ─── Reports ─────────────────────────────────────────
 export const getLowStockStocks = (params) => api.get('/reports/low-stock', { params });
 export const getNoMovementStocks = (params) => api.get('/reports/no-movement', { params });
 export const sendLineNotification = (data) => api.post('/reports/no-movement/send-line', data);
 export const sendEmailReport = (data) => api.post('/reports/no-movement/send-email', data);
 
+// ─── Manual (spreadsheet editing) ────────────────────
+export const manualUpdateCell = (data) => api.patch('/manual/cell', data);
+export const manualDeleteRow = (lot_id, location_id) => api.delete('/manual/row', { params: { lot_id, location_id } });
+export const manualAddRow = (data) => api.post('/manual/row', data);
+export const manualReformat = (changes) => api.put('/manual/reformat', { changes });
+
 // ─── Settings ────────────────────────────────────────
 export const getSettings = () => api.get('/settings');
 export const saveSettings = (data) => api.put('/settings', data);
+
+// ─── Customers ───────────────────────────────────────
+export const getCustomers = () => api.get('/customers');
+export const getCustomer = (id) => api.get(`/customers/${id}`);
+export const createCustomer = (data) => api.post('/customers', data);
+export const updateCustomer = (id, data) => api.put(`/customers/${id}`, data);
+export const deleteCustomer = (id) => api.delete(`/customers/${id}`);
+
+export const getCustomerDeposits = (id) => api.get(`/customers/${id}/deposits`);
+export const getDeposit = (depositId) => api.get(`/customers/deposits/${depositId}`);
+export const createDeposit = (customerId, data) => api.post(`/customers/${customerId}/deposits`, data);
+
+export const getCustomerDepositItems = (id, params) => api.get(`/customers/${id}/deposit-items`, { params });
+export const getCustomerWithdrawals = (id) => api.get(`/customers/${id}/withdrawals`);
+export const getWithdrawalDetail = (wId) => api.get(`/customers/withdrawals/${wId}`);
+export const createCustomerWithdrawal = (customerId, data) => api.post(`/customers/${customerId}/withdrawals`, data);
+
+export const getCustomerPrintData = (depositId, withdrawalId) => api.get(`/customers/print/${depositId}/${withdrawalId}`);
 
 export default api;

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiPackage, FiBox } from 'react-icons/fi';
+import { FiPlus, FiEdit2, FiTrash2, FiSearch, FiPackage, FiBox, FiAnchor } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { getProducts, createProduct, updateProduct, deleteProduct, deleteAllProducts } from '../services/api';
 
 const TABS = [
   { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
-  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> }
+  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> },
+  { id: 'IMPORT', label: 'Import', icon: <FiAnchor /> }
 ];
 
 const EMPTY_BULK = { fish_name: '', size: '', bulk_weight_kg: '', type: '', glazing: '' };
@@ -40,16 +41,18 @@ function Products() {
   };
 
   const isCE = activeTab === 'CONTAINER_EXTRA';
+  const isImport = activeTab === 'IMPORT';
+  const isNonBulk = isCE || isImport;
 
   const openAdd = () => {
     setEditing(null);
-    setForm(isCE ? { ...EMPTY_CE } : { ...EMPTY_BULK });
+    setForm(isNonBulk ? { ...EMPTY_CE } : { ...EMPTY_BULK });
     setShowModal(true);
   };
 
   const openEdit = (p) => {
     setEditing(p);
-    if (isCE) {
+    if (isNonBulk) {
       setForm({
         fish_name: p.fish_name,
         size: p.size,
@@ -71,7 +74,7 @@ function Products() {
   const isDuplicate = (formData, editingId) => {
     return products.find(p => {
       if (editingId && p.id === editingId) return false;
-      if (isCE) {
+      if (isNonBulk) {
         return (
           p.fish_name.toLowerCase() === formData.fish_name.trim().toLowerCase() &&
           p.size.toLowerCase() === formData.size.trim().toLowerCase() &&
@@ -102,7 +105,7 @@ function Products() {
 
     try {
       const payload = { ...form, stock_type: activeTab };
-      if (isCE) {
+      if (isNonBulk) {
         payload.type = null;
         payload.glazing = null;
       } else {
@@ -136,7 +139,7 @@ function Products() {
   };
 
   const handleDeleteAll = async () => {
-    const label = isCE ? 'Container Extra' : 'Bulk';
+    const label = isCE ? 'Container Extra' : isImport ? 'Import' : 'Bulk';
     if (!window.confirm(`Are you sure you want to delete ALL ${products.length} ${label} products?\n\nThis action will deactivate every product.`)) return;
     if (!window.confirm('This is irreversible. Confirm again to proceed.')) return;
     try {
@@ -192,7 +195,7 @@ function Products() {
             <input
               className="form-control"
               style={{ paddingLeft: 36 }}
-              placeholder={isCE ? 'Search by order, fish name, size...' : 'Search by fish name, size, type, glazing...'}
+              placeholder={isNonBulk ? 'Search by order/invoice, fish name, size...' : 'Search by fish name, size, type, glazing...'}
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -207,29 +210,29 @@ function Products() {
             <thead>
               <tr>
                 <th>#</th>
-                {isCE && <th>Order</th>}
+                {isNonBulk && <th>{isImport ? 'Invoice No' : 'Order'}</th>}
                 <th>Fish Name</th>
                 <th>Size</th>
-                <th>{isCE ? 'Packed Size (KG)' : 'Bulk Weight (KG)'}</th>
-                {!isCE && <th>Type</th>}
-                {!isCE && <th>Glazing</th>}
+                <th>{isNonBulk ? 'Packed Size (KG)' : 'Bulk Weight (KG)'}</th>
+                {!isNonBulk && <th>Type</th>}
+                {!isNonBulk && <th>Glazing</th>}
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={isCE ? 6 : 7} style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                <tr><td colSpan={isNonBulk ? 6 : 7} style={{ textAlign: 'center', padding: 40, color: '#999' }}>
                   {search ? 'No products match your search.' : 'No products found. Click "Add Product" to create one.'}
                 </td></tr>
               ) : filtered.map((p, i) => (
                 <tr key={p.id}>
                   <td className="text-center">{i + 1}</td>
-                  {isCE && <td><strong>{p.order_code || '-'}</strong></td>}
+                  {isNonBulk && <td><strong>{p.order_code || '-'}</strong></td>}
                   <td><strong>{p.fish_name}</strong></td>
                   <td>{p.size}</td>
                   <td className="num-cell">{Number(p.bulk_weight_kg).toFixed(2)}</td>
-                  {!isCE && <td>{p.type || '-'}</td>}
-                  {!isCE && <td>{p.glazing || '-'}</td>}
+                  {!isNonBulk && <td>{p.type || '-'}</td>}
+                  {!isNonBulk && <td>{p.glazing || '-'}</td>}
                   <td>
                     <button className="btn btn-outline btn-sm" onClick={() => openEdit(p)}><FiEdit2 /></button>
                     {' '}
@@ -246,15 +249,15 @@ function Products() {
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{editing ? 'Edit Product' : 'Add Product'} ({isCE ? 'Container Extra' : 'Bulk'})</h3>
+              <h3>{editing ? 'Edit Product' : 'Add Product'} ({isCE ? 'Container Extra' : isImport ? 'Import' : 'Bulk'})</h3>
               <button className="modal-close" onClick={() => setShowModal(false)}>&times;</button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
-                {isCE && (
+                {isNonBulk && (
                   <div className="form-group">
-                    <label>Order Code</label>
-                    <input className="form-control" value={form.order_code || ''} onChange={e => setForm({ ...form, order_code: e.target.value })} placeholder="e.g. ADV-01" />
+                    <label>{isImport ? 'Invoice No' : 'Order Code'}</label>
+                    <input className="form-control" value={form.order_code || ''} onChange={e => setForm({ ...form, order_code: e.target.value })} placeholder={isImport ? 'e.g. CK25/027/AS-2324' : 'e.g. ADV-01'} />
                   </div>
                 )}
                 <div className="form-row">
@@ -269,17 +272,17 @@ function Products() {
                 </div>
                 <div className="form-row">
                   <div className="form-group">
-                    <label>{isCE ? 'Packed Size (KG)' : 'Bulk Weight (KG)'}</label>
+                    <label>{isNonBulk ? 'KG per unit' : 'Bulk Weight (KG)'}</label>
                     <input className="form-control" type="number" step="0.01" value={form.bulk_weight_kg} onChange={e => setForm({ ...form, bulk_weight_kg: e.target.value })} placeholder="0.00" />
                   </div>
-                  {!isCE && (
+                  {!isNonBulk && (
                     <div className="form-group">
                       <label>Type</label>
                       <input className="form-control" value={form.type || ''} onChange={e => setForm({ ...form, type: e.target.value })} placeholder="e.g. Frozen" />
                     </div>
                   )}
                 </div>
-                {!isCE && (
+                {!isNonBulk && (
                   <div className="form-group">
                     <label>Glazing</label>
                     <input className="form-control" value={form.glazing || ''} onChange={e => setForm({ ...form, glazing: e.target.value })} placeholder="e.g. 20%" />

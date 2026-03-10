@@ -6,8 +6,8 @@ import 'react-toastify/dist/ReactToastify.css';
 import {
   FiGrid, FiPackage, FiMapPin, FiArrowDownCircle,
   FiArrowUpCircle, FiTable, FiUpload, FiClock,
-  FiMenu, FiX, FiChevronLeft, FiLayers,
-  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown
+  FiMenu, FiX, FiChevronLeft, FiLayers, FiList,
+  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown, FiCalendar, FiUsers, FiUserCheck
 } from 'react-icons/fi';
 
 import Dashboard from './pages/Dashboard';
@@ -25,8 +25,13 @@ import WithdrawForm from './pages/WithdrawForm';
 import WithdrawReport from './pages/WithdrawReport';
 import Manage from './pages/Manage';
 import Manual from './pages/Manual';
+import LinesReformat from './pages/LinesReformat';
+import CustomerMaster from './pages/CustomerMaster';
+import CustomerStock from './pages/CustomerStock';
+import CustomerPrint from './pages/CustomerPrint';
 import NoMovementStocks from './pages/NoMovementStocks';
 import LowSafetyStocks from './pages/LowSafetyStocks';
+import Calendar from './pages/Calendar';
 import Settings from './pages/Settings';
 
 // Sidebar wrapper that auto-closes on mobile route change
@@ -54,6 +59,10 @@ function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
       <div className="nav-section-title"><span>Master Data</span></div>
       {link('/products', <FiPackage />, 'Product Master')}
       {link('/locations', <FiMapPin />, 'Location Master')}
+      {link('/customer-master', <FiUsers />, 'Customer Stock Master')}
+
+      <div className="nav-section-title"><span>Customer</span></div>
+      {link('/customer', <FiUserCheck />, 'Customer')}
 
       <div className="nav-section-title"><span>Operations</span></div>
       {link('/stock-in', <FiArrowDownCircle />, 'Stock IN')}
@@ -61,6 +70,7 @@ function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
       {link('/withdraw', <FiShoppingCart />, 'Withdraw')}
       {link('/manage', <FiSettings />, 'Manage')}
       {link('/manual', <FiBook />, 'Manual')}
+      {link('/lines-reformat', <FiList />, 'Lines Re-format')}
       {link('/movements', <FiClock />, 'Movement History')}
 
       <div className="nav-section-title"><span>Reports</span></div>
@@ -72,6 +82,7 @@ function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
 
       <div className="nav-section-title"><span>Tools</span></div>
       {link('/upload', <FiUpload />, 'Excel Upload')}
+      {link('/calendar', <FiCalendar />, 'Calendar')}
       {link('/settings', <FiSettings />, 'Settings')}
     </nav>
   );
@@ -164,6 +175,10 @@ function App() {
               <Route path="/stock-out" element={<StockOut />} />
               <Route path="/stock-table" element={<StockTable />} />
               <Route path="/manual" element={<Manual />} />
+              <Route path="/lines-reformat" element={<LinesReformat />} />
+              <Route path="/customer-master" element={<CustomerMaster />} />
+              <Route path="/customer" element={<CustomerStock />} />
+              <Route path="/customer/print/:depositId/:withdrawalId" element={<CustomerPrint />} />
               <Route path="/stock-chart" element={<StockChart />} />
               <Route path="/upload" element={<ExcelUpload />} />
               <Route path="/withdraw" element={<Withdraw />} />
@@ -174,6 +189,7 @@ function App() {
               <Route path="/location-layout" element={<LocationLayout />} />
               <Route path="/no-movement" element={<NoMovementStocks />} />
               <Route path="/low-safety-stocks" element={<LowSafetyStocks />} />
+              <Route path="/calendar" element={<Calendar />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </div>

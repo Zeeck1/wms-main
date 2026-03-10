@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { FiArrowUpCircle, FiPackage, FiBox } from 'react-icons/fi';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { FiArrowUpCircle, FiPackage, FiBox, FiAnchor } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { getInventory, stockOut } from '../services/api';
 
 const TABS = [
   { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
-  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> }
+  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> },
+  { id: 'IMPORT', label: 'Import', icon: <FiAnchor /> }
 ];
 
 function StockOut() {
@@ -21,8 +22,11 @@ function StockOut() {
     reference_no: '',
     notes: ''
   });
+  const [searchQuery, setSearchQuery] = useState('');
 
   const isCE = activeTab === 'CONTAINER_EXTRA';
+  const isImport = activeTab === 'IMPORT';
+  const isNonBulk = isCE || isImport;
 
   const fetchInventory = useCallback(async () => {
     try {
@@ -40,8 +44,25 @@ function StockOut() {
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setSelectedRow(null);
+    setSearchQuery('');
     setForm({ quantity_mc: '', weight_kg: '', reference_no: '', notes: '' });
   };
+
+  const filteredInventory = useMemo(() => {
+    if (!searchQuery.trim()) return inventory;
+    const q = searchQuery.trim().toLowerCase();
+    return inventory.filter(item => {
+      const fish = (item.fish_name || '').toLowerCase();
+      const size = (item.size || '').toLowerCase();
+      const lot = (item.lot_no || '').toLowerCase();
+      const location = (item.line_place || '').toLowerCase();
+      const order = (item.order_code || '').toLowerCase();
+      const handMc = String(item.hand_on_balance_mc ?? '');
+      const handKg = String(item.hand_on_balance_kg ?? '');
+      return fish.includes(q) || size.includes(q) || lot.includes(q) ||
+        location.includes(q) || order.includes(q) || handMc.includes(q) || handKg.includes(q);
+    });
+  }, [inventory, searchQuery]);
 
   const selectItem = (item) => {
     setSelectedRow(item);
@@ -113,9 +134,9 @@ function StockOut() {
             </div>
             <div className="card-body">
               <div className="alert alert-warning">
-                {isCE && selectedRow.order_code && <><strong>{selectedRow.order_code}</strong> — </>}
+                {isNonBulk && selectedRow.order_code && <><strong>{selectedRow.order_code}</strong> — </>}
                 <strong>{selectedRow.fish_name}</strong> ({selectedRow.size}) |
-                {!isCE && <> Lot: {selectedRow.lot_no} |</>}
+                {!isNonBulk && <> Lot: {selectedRow.lot_no} |</>}
                 {' '}Location: {selectedRow.line_place} |
                 <strong> Hand On: {selectedRow.hand_on_balance_mc} MC</strong>
               </div>
@@ -150,16 +171,26 @@ function StockOut() {
 
         <div className="card">
           <div className="card-header">
-            <h3>Select Item to Stock Out ({isCE ? 'Container Extra' : 'Bulk'})</h3>
+            <h3>Select Item to Stock Out ({isCE ? 'Container Extra' : isImport ? 'Import' : 'Bulk'})</h3>
+            <div className="search-inline" style={{ minWidth: 260 }}>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search fish, size, lot, location, order..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ maxWidth: 320 }}
+              />
+            </div>
           </div>
           <div className="table-container">
             <table className="excel-table">
               <thead>
                 <tr>
-                  {isCE && <th>Order</th>}
+                  {isNonBulk && <th>{isImport ? 'Invoice No' : 'Order'}</th>}
                   <th>Fish Name</th>
                   <th>Size</th>
-                  {!isCE && <th>Lot No</th>}
+                  {!isNonBulk && <th>Lot No</th>}
                   <th>Location</th>
                   <th>Hand On (MC)</th>
                   <th>Hand On (KG)</th>
@@ -168,13 +199,15 @@ function StockOut() {
               </thead>
               <tbody>
                 {inventory.length === 0 ? (
-                  <tr><td colSpan={isCE ? 7 : 7} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No stock available</td></tr>
-                ) : inventory.map((item, i) => (
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No stock available</td></tr>
+                ) : filteredInventory.length === 0 ? (
+                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No matches for &quot;{searchQuery}&quot;</td></tr>
+                ) : filteredInventory.map((item, i) => (
                   <tr key={i} style={{ background: selectedRow === item ? '#dbeafe' : undefined, cursor: 'pointer' }} onClick={() => selectItem(item)}>
-                    {isCE && <td><strong>{item.order_code || '-'}</strong></td>}
+                    {isNonBulk && <td><strong>{item.order_code || '-'}</strong></td>}
                     <td><strong>{item.fish_name}</strong></td>
                     <td>{item.size}</td>
-                    {!isCE && <td>{item.lot_no}</td>}
+                    {!isNonBulk && <td>{item.lot_no}</td>}
                     <td>{item.line_place}</td>
                     <td className="num-cell"><strong>{item.hand_on_balance_mc}</strong></td>
                     <td className="num-cell">{Number(item.hand_on_balance_kg).toFixed(2)}</td>

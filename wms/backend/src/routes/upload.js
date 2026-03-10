@@ -297,4 +297,110 @@ router.post('/container-extra', upload.single('file'), async (req, res) => {
   }
 });
 
+// POST upload Import Excel file
+router.post('/import', upload.single('file'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    await conn.beginTransaction();
+
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (data.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty' });
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    let productsCreated = 0;
+    let productsReused = 0;
+    let locationsCreated = 0;
+    let locationsReused = 0;
+    const errors = [];
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      try {
+        const fishName = (row['Fish Name'] || row['fish_name'] || row['Fish'] || '').toString().trim();
+        const size = (row['Size'] || row['size'] || '').toString().trim() || '-';
+        const kgWeight = parseFloat(row['KG'] || row['Bulk Weight (KG)'] || row['bulk_weight_kg'] || 0);
+        const mc = parseInt(row['MC'] || row['Balance MC'] || row['Balance'] || row['Hand On Balance'] || row['Qty'] || 0) || 0;
+        const invoiceNo = (row['Invoice No'] || row['Invoice'] || row['invoice_no'] || row['Order'] || '').toString().trim();
+        const arrivalDateRaw = row['Arrival Date'] || row['CS In Date'] || row['Date'] || row['arrival_date'] || '';
+        const remark = (row['Remark'] || row['remark'] || row['Remarks'] || '').toString().trim();
+        const linePlace = (row['LINE'] || row['Line'] || row['Lines / Place'] || row['line_place'] || row['Location'] || '').toString().trim();
+
+        if (!fishName) {
+          skipped++;
+          errors.push(`Row ${i + 2}: Skipped — missing Fish Name`);
+          continue;
+        }
+
+        const product = await findOrCreateProduct(conn, fishName, size, kgWeight, null, null, 'IMPORT', invoiceNo || null);
+        if (product.isNew) productsCreated++;
+        else productsReused++;
+
+        const locCode = linePlace || `IMP-LOC-${i + 1}`;
+        const location = await findOrCreateLocation(conn, locCode, 1, 1);
+        if (location.isNew) locationsCreated++;
+        else locationsReused++;
+
+        let arrivalDate = null;
+        if (arrivalDateRaw) {
+          const d = new Date(arrivalDateRaw);
+          if (!isNaN(d.getTime())) arrivalDate = d.toISOString().split('T')[0];
+        }
+        if (!arrivalDate) arrivalDate = new Date().toISOString().split('T')[0];
+
+        const lotNo = `IMP-${Date.now()}-${i}`;
+        const [lotResult] = await conn.query(
+          'INSERT INTO lots (lot_no, cs_in_date, product_id, remark) VALUES (?, ?, ?, ?)',
+          [lotNo, arrivalDate, product.id, remark || null]
+        );
+        const lotId = lotResult.insertId;
+
+        if (mc > 0) {
+          await conn.query(
+            `INSERT INTO movements (lot_id, location_id, quantity_mc, weight_kg, movement_type, reference_no, created_by)
+             VALUES (?, ?, ?, ?, 'IN', 'IMP-EXCEL-IMPORT', 'excel-import')`,
+            [lotId, location.id, mc, mc * kgWeight]
+          );
+        }
+
+        imported++;
+      } catch (rowError) {
+        errors.push(`Row ${i + 2}: ${rowError.message}`);
+        skipped++;
+      }
+    }
+
+    await conn.commit();
+
+    res.json({
+      message: 'Import stock upload completed',
+      total_rows: data.length,
+      imported,
+      skipped,
+      products_created: productsCreated,
+      products_reused: productsReused,
+      locations_created: locationsCreated,
+      locations_reused: locationsReused,
+      errors: errors.slice(0, 20)
+    });
+
+  } catch (error) {
+    await conn.rollback();
+    console.error('Error processing import upload:', error);
+    res.status(500).json({ error: 'Failed to process Excel file: ' + error.message });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;

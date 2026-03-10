@@ -268,8 +268,8 @@ export default function NoMovementStocks() {
                     </td>
                     <td>{item.line_place || item.location_code}</td>
                     <td>
-                      <span className={`nm-type-badge ${item.stock_type === 'CONTAINER_EXTRA' ? 'nm-type-extra' : 'nm-type-bulk'}`}>
-                        {item.stock_type === 'CONTAINER_EXTRA' ? 'EXTRA' : 'BULK'}
+                      <span className={`nm-type-badge ${item.stock_type === 'CONTAINER_EXTRA' ? 'nm-type-extra' : item.stock_type === 'IMPORT' ? 'nm-type-import' : 'nm-type-bulk'}`}>
+                        {item.stock_type === 'CONTAINER_EXTRA' ? 'EXTRA' : item.stock_type === 'IMPORT' ? 'IMPORT' : 'BULK'}
                       </span>
                     </td>
                     <td>{item.cs_in_date ? new Date(item.cs_in_date).toLocaleDateString('en-GB') : '—'}</td>

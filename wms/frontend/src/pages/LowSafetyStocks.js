@@ -142,8 +142,8 @@ export default function LowSafetyStocks() {
                       </td>
                       <td>{item.line_place || item.location_code || '—'}</td>
                       <td>
-                        <span className={`ls-type-badge ${item.stock_type === 'CONTAINER_EXTRA' ? 'ls-type-extra' : 'ls-type-bulk'}`}>
-                          {item.stock_type === 'CONTAINER_EXTRA' ? 'EXTRA' : 'BULK'}
+                        <span className={`ls-type-badge ${item.stock_type === 'CONTAINER_EXTRA' ? 'ls-type-extra' : item.stock_type === 'IMPORT' ? 'ls-type-import' : 'ls-type-bulk'}`}>
+                          {item.stock_type === 'CONTAINER_EXTRA' ? 'EXTRA' : item.stock_type === 'IMPORT' ? 'IMPORT' : 'BULK'}
                         </span>
                       </td>
                       <td className="ls-cell-num">{Number(item.hand_on_balance_mc)}</td>

@@ -38,7 +38,7 @@ async function initDatabase() {
         bulk_weight_kg DECIMAL(10,2) NOT NULL DEFAULT 0,
         type VARCHAR(50) DEFAULT NULL,
         glazing VARCHAR(50) DEFAULT NULL,
-        stock_type ENUM('BULK','CONTAINER_EXTRA') NOT NULL DEFAULT 'BULK',
+        stock_type ENUM('BULK','CONTAINER_EXTRA','IMPORT') NOT NULL DEFAULT 'BULK',
         order_code VARCHAR(50) DEFAULT NULL,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -55,7 +55,7 @@ async function initDatabase() {
         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' AND COLUMN_NAME = 'stock_type'
       `, [dbName]);
       if (stCols.length === 0) {
-        await connection.query("ALTER TABLE products ADD COLUMN stock_type ENUM('BULK','CONTAINER_EXTRA') NOT NULL DEFAULT 'BULK' AFTER glazing");
+        await connection.query("ALTER TABLE products ADD COLUMN stock_type ENUM('BULK','CONTAINER_EXTRA','IMPORT') NOT NULL DEFAULT 'BULK' AFTER glazing");
         await connection.query("ALTER TABLE products ADD COLUMN order_code VARCHAR(50) DEFAULT NULL AFTER stock_type");
         // Rebuild unique key to include stock_type and order_code
         try { await connection.query('ALTER TABLE products DROP INDEX uq_product'); } catch (e) { /* ignore */ }
@@ -65,6 +65,18 @@ async function initDatabase() {
     } catch (e) {
       // ignore migration errors
     }
+
+    // Migration: extend stock_type ENUM to include 'IMPORT'
+    try {
+      const [colInfo] = await connection.query(`
+        SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' AND COLUMN_NAME = 'stock_type'
+      `, [dbName]);
+      if (colInfo.length > 0 && !colInfo[0].COLUMN_TYPE.includes('IMPORT')) {
+        await connection.query("ALTER TABLE products MODIFY COLUMN stock_type ENUM('BULK','CONTAINER_EXTRA','IMPORT') NOT NULL DEFAULT 'BULK'");
+        console.log('  Migration: extended stock_type ENUM to include IMPORT');
+      }
+    } catch (e) { /* ignore */ }
 
     // Location uniqueness is by line_place ONLY
     // The same location code (e.g. A03r-2) can hold many products but is ONE location
@@ -304,6 +316,81 @@ async function initDatabase() {
       FROM inventory_view
     `);
     console.log('  View created: dashboard_summary');
+
+    // ── Customer stock tables ──────────────────────────────────────────
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        address TEXT,
+        document_no VARCHAR(100),
+        phone VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    console.log('  Table created: customers');
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS customer_deposits (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        deposit_date DATE NOT NULL,
+        doc_ref VARCHAR(100),
+        receiver_name VARCHAR(255),
+        inspector_name VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('  Table created: customer_deposits');
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS customer_deposit_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        deposit_id INT NOT NULL,
+        seq_no INT NOT NULL,
+        receive_date DATE,
+        item_name VARCHAR(255) NOT NULL,
+        lot_no VARCHAR(100),
+        boxes INT DEFAULT 0,
+        weight_kg DECIMAL(12,2) DEFAULT 0,
+        nw_unit DECIMAL(12,2) DEFAULT 0,
+        time_str VARCHAR(50),
+        remark TEXT,
+        FOREIGN KEY (deposit_id) REFERENCES customer_deposits(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('  Table created: customer_deposit_items');
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS customer_withdrawals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        withdraw_date DATE NOT NULL,
+        doc_ref VARCHAR(100),
+        withdrawer_name VARCHAR(255),
+        inspector_name VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('  Table created: customer_withdrawals');
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS customer_withdrawal_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        withdrawal_id INT NOT NULL,
+        deposit_item_id INT NOT NULL,
+        boxes_out INT DEFAULT 0,
+        weight_kg_out DECIMAL(12,2) DEFAULT 0,
+        time_str VARCHAR(50),
+        remark TEXT,
+        FOREIGN KEY (withdrawal_id) REFERENCES customer_withdrawals(id) ON DELETE CASCADE,
+        FOREIGN KEY (deposit_item_id) REFERENCES customer_deposit_items(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('  Table created: customer_withdrawal_items');
 
     console.log('\nDatabase schema initialized successfully!');
 

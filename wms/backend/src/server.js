@@ -28,6 +28,8 @@ app.use('/api/upload', require('./routes/upload'));
 app.use('/api/withdrawals', require('./routes/withdrawals'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/manual', require('./routes/manual'));
+app.use('/api/customers', require('./routes/customers'));
 
 // Health check
 app.get('/api/health', (req, res) => {

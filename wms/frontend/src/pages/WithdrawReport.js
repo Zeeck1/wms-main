@@ -125,7 +125,7 @@ function WithdrawReport() {
               {items.map((item, i) => (
                 <tr key={item.id}>
                   <td className="wr-bold">
-                    {item.stock_type === 'CONTAINER_EXTRA' && item.order_code
+                    {(item.stock_type === 'CONTAINER_EXTRA' || item.stock_type === 'IMPORT') && item.order_code
                       ? `${item.fish_name} (${item.order_code})`
                       : item.fish_name}
                   </td>

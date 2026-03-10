@@ -523,10 +523,12 @@ function Withdraw() {
                     const stockLabel = typeOrGlazing
                       ? `${group.fish_name}/${group.size}/${typeOrGlazing} = ${group.total_mc} MC.`
                       : `${group.fish_name}/${group.size} = ${group.total_mc} MC.`;
-                    const isExtra = (group.stock_type || 'BULK') === 'CONTAINER_EXTRA';
-                    const remark = isExtra
+                    const st = group.stock_type || 'BULK';
+                    const remark = st === 'CONTAINER_EXTRA'
                       ? (group.order_code ? `[EXTRA] Order: ${group.order_code}` : '[EXTRA]')
-                      : '[BULK]';
+                      : st === 'IMPORT'
+                        ? (group.order_code ? `[IMPORT] Invoice: ${group.order_code}` : '[IMPORT]')
+                        : '[BULK]';
                     return (
                       <div key={group.key} className={`wd-stock-item ${inCart ? 'in-cart' : ''}`}>
                         <div className="wd-stock-item-info">
@@ -579,7 +581,9 @@ function Withdraw() {
                           <div className="wd-cart-item-remark">
                             {(item.stock_type || 'BULK') === 'CONTAINER_EXTRA'
                               ? (item.order_code ? `[EXTRA] Order: ${item.order_code}` : '[EXTRA]')
-                              : '[BULK]'}
+                              : (item.stock_type || 'BULK') === 'IMPORT'
+                                ? (item.order_code ? `[IMPORT] Invoice: ${item.order_code}` : '[IMPORT]')
+                                : '[BULK]'}
                           </div>
                           <div className="wd-cart-item-loc" style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 2 }}>
                             Auto-picks from {item.subItems.length} location{item.subItems.length > 1 ? 's' : ''} (nearest first)

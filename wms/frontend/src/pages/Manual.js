@@ -1,404 +1,550 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { FiSearch, FiPackage, FiBox, FiSave } from 'react-icons/fi';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { FiSearch, FiPackage, FiBox, FiAnchor, FiPlus, FiTrash2, FiRotateCcw, FiCopy, FiSave, FiAlertTriangle } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { getInventory, adjustInventoryBalance, updateLotCsInDate } from '../services/api';
+import { getInventory, manualUpdateCell, manualDeleteRow, manualAddRow } from '../services/api';
 import { parseLocationCode } from '../config/warehouseConfig';
 
-const rowKey = (r) => `${r.lot_id}-${r.location_id}`;
+// ─── Column Definitions ────────────────────────────────────────────────
+const BULK_COLS = [
+  { key: 'fish_name', field: 'fish_name', label: 'Fish Name', editable: true, type: 'text', w: 140 },
+  { key: 'size', field: 'size', label: 'Size', editable: true, type: 'text', w: 90 },
+  { key: 'bulk_weight_kg', field: 'bulk_weight_kg', label: 'Bulk Wt (KG)', editable: true, type: 'number', w: 95 },
+  { key: 'type', field: 'type', label: 'Type', editable: true, type: 'text', w: 70 },
+  { key: 'glazing', field: 'glazing', label: 'Glazing', editable: true, type: 'text', w: 70 },
+  { key: 'cs_in_date', field: 'cs_in_date', label: 'CS In Date', editable: true, type: 'date', w: 120 },
+  { key: 'sticker', field: 'sticker', label: 'Sticker', editable: true, type: 'text', w: 80 },
+  { key: 'line_place', field: 'line_place', label: 'Lines / Place', editable: true, type: 'text', w: 100 },
+  { key: 'stack_no', field: 'stack_no', label: 'Stack No', editable: true, type: 'number', w: 70 },
+  { key: 'stack_total', field: 'stack_total', label: 'Stack Total', editable: true, type: 'number', w: 80 },
+  { key: 'old_balance_mc', label: 'Old Bal', editable: false, w: 65, headerStyle: { background: '#2d4a1e', color: '#d4edda' } },
+  { key: 'new_income_mc', label: 'New Inc', editable: false, w: 65, headerStyle: { background: '#1a3a5c', color: '#cce5ff' } },
+  { key: 'hand_on_balance_mc', field: 'hand_on_balance_mc', label: 'Hand On Bal', editable: true, type: 'number', w: 90, headerStyle: { background: '#5c1a1a', color: '#f8d7da' } },
+  { key: '_kg_total', label: 'KG', editable: false, formula: true, w: 80 },
+];
 
-// Format to date-only YYYY-MM-DD (no time)
+const nonBulkCols = (isImport) => [
+  { key: 'order_code', field: 'order_code', label: isImport ? 'Invoice No' : 'Order', editable: true, type: 'text', w: 130 },
+  { key: 'fish_name', field: 'fish_name', label: 'Fish Name', editable: true, type: 'text', w: 140 },
+  { key: 'size', field: 'size', label: 'Size', editable: true, type: 'text', w: 90 },
+  { key: 'bulk_weight_kg', field: 'bulk_weight_kg', label: 'KG', editable: true, type: 'number', w: 70 },
+  { key: 'cs_in_date', field: 'cs_in_date', label: 'Arrival Date', editable: true, type: 'date', w: 120 },
+  { key: '_kg_total', label: 'Total KG', editable: false, formula: true, w: 80 },
+  { key: 'hand_on_balance_mc', field: 'hand_on_balance_mc', label: 'Balance MC', editable: true, type: 'number', w: 90, headerStyle: { background: '#5c1a1a', color: '#f8d7da' } },
+  { key: 'line_place', field: 'line_place', label: 'Line', editable: true, type: 'text', w: 100 },
+  { key: 'stack_no', field: 'stack_no', label: 'Stack No', editable: true, type: 'number', w: 70 },
+  { key: 'remark', field: 'remark', label: 'Remark', editable: true, type: 'text', w: 120 },
+];
+
+const TABS = [
+  { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
+  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> },
+  { id: 'IMPORT', label: 'Import', icon: <FiAnchor /> },
+];
+
+const LINE_OPTIONS = [
+  { value: '', label: 'All (L & R)' },
+  { value: 'L', label: 'L (Left)' },
+  { value: 'R', label: 'R (Right)' },
+];
+
+const rk = (r) => `${r.lot_id}-${r.location_id}`;
 const toDateOnly = (d) => {
   if (d == null || d === '') return '';
   if (typeof d === 'string') return d.split('T')[0];
   try { return new Date(d).toISOString().split('T')[0]; } catch { return ''; }
 };
+const getCellDisplay = (row, col) => {
+  if (col.formula) return (Number(row.bulk_weight_kg) || 0) * (Number(row.hand_on_balance_mc) || 0);
+  const v = row[col.key];
+  if (col.type === 'date') return toDateOnly(v);
+  return v ?? '';
+};
 
-const TABS = [
-  { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
-  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> }
-];
-
-const LINE_OPTIONS = [
-  { value: '', label: 'All (L & R)' },
-  { value: 'L', label: 'L (Left side)' },
-  { value: 'R', label: 'R (Right side)' }
-];
-
+// ─── Component ─────────────────────────────────────────────────────────
 function Manual() {
   const [activeTab, setActiveTab] = useState('BULK');
-  const [inventory, setInventory] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [originalRows, setOriginalRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({
-    fish_name: '',
-    line: '',
-    line_detail: '',
-    stack_no: ''
-  });
-  const [editedBalances, setEditedBalances] = useState({});
-  const [editedCsInDates, setEditedCsInDates] = useState({});
   const [saving, setSaving] = useState(false);
+  const [filters, setFilters] = useState({ fish_name: '', line: '', line_detail: '', stack_no: '' });
 
-  const isCE = activeTab === 'CONTAINER_EXTRA';
+  const [selectedCell, setSelectedCell] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const [copiedRow, setCopiedRow] = useState(null);
+  const [dragTarget, setDragTarget] = useState(null);
 
-  const getCsInDate = (r) => {
-    if (editedCsInDates[r.lot_id] !== undefined) return editedCsInDates[r.lot_id];
-    return toDateOnly(r.cs_in_date);
-  };
+  const rowsRef = useRef(rows);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
+  const tableRef = useRef(null);
+  const dragRef = useRef(null);
 
-  const setCsInDate = (lotId, value) => {
-    const v = value === '' ? '' : value;
-    setEditedCsInDates(prev => (v === '' ? (() => { const next = { ...prev }; delete next[lotId]; return next; })() : { ...prev, [lotId]: v }));
-  };
+  const isNonBulk = activeTab !== 'BULK';
+  const isImport = activeTab === 'IMPORT';
+  const columns = useMemo(() => isNonBulk ? nonBulkCols(isImport) : BULK_COLS, [isNonBulk, isImport]);
+  const columnsRef = useRef(columns);
+  useEffect(() => { columnsRef.current = columns; }, [columns]);
 
-  const getBalance = (r) => {
-    const key = rowKey(r);
-    if (editedBalances[key] !== undefined && editedBalances[key] !== '') return Number(editedBalances[key]);
-    return Number(r.hand_on_balance_mc);
-  };
+  // ─── Dirty tracking ──────────────────────────────────────────────────
+  const pendingEdits = useMemo(() => {
+    const edits = {};
+    rows.forEach((row, i) => {
+      const orig = originalRows.find(o => rk(o) === rk(row));
+      if (!orig) return;
+      columns.forEach(col => {
+        if (!col.editable) return;
+        const curVal = col.type === 'date' ? toDateOnly(row[col.key]) : String(row[col.key] ?? '');
+        const origVal = col.type === 'date' ? toDateOnly(orig[col.key]) : String(orig[col.key] ?? '');
+        if (curVal !== origVal) {
+          edits[`${rk(row)}-${col.field}`] = {
+            lot_id: row.lot_id, location_id: row.location_id,
+            field: col.field, value: curVal
+          };
+        }
+      });
+    });
+    return edits;
+  }, [rows, originalRows, columns]);
 
-  const setBalance = (r, value) => {
-    const key = rowKey(r);
-    const v = value === '' ? '' : Math.max(0, parseInt(value, 10) || 0);
-    setEditedBalances(prev => (v === '' ? (() => { const next = { ...prev }; delete next[key]; return next; })() : { ...prev, [key]: v }));
-  };
+  const isDirty = Object.keys(pendingEdits).length > 0;
 
-  const loadInventory = useCallback(async (params = {}) => {
+  // ─── Navigation Blocker ──────────────────────────────────────────────
+  const dirtyRef = useRef(false);
+  useEffect(() => { dirtyRef.current = isDirty; }, [isDirty]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const onBeforeUnload = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    const onClick = (e) => {
+      if (!dirtyRef.current) return;
+      const anchor = e.target.closest('a[href]');
+      if (!anchor) return;
+      const href = anchor.getAttribute('href');
+      if (!href || href.startsWith('http') || href.startsWith('mailto')) return;
+      if (!window.confirm('You have unsaved changes. Leave without saving?')) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, []);
+
+  // ─── Data Loading ────────────────────────────────────────────────────
+  const loadData = useCallback(async (params = {}) => {
     setLoading(true);
     try {
-      const p = { stock_type: activeTab, ...params };
-      const res = await getInventory(p);
-      setInventory(res.data);
-    } catch (err) {
-      toast.error('Failed to load stock data');
-    } finally {
-      setLoading(false);
-    }
+      const res = await getInventory({ stock_type: activeTab, ...params });
+      setRows(res.data);
+      setOriginalRows(res.data.map(r => ({ ...r })));
+    } catch { toast.error('Failed to load data'); }
+    finally { setLoading(false); }
   }, [activeTab]);
 
   useEffect(() => {
-    setFilters(prev => ({ ...prev, fish_name: '', line_detail: '' }));
-    loadInventory();
-  }, [activeTab, loadInventory]);
+    setFilters(f => ({ ...f, fish_name: '', line_detail: '' }));
+    setUndoStack([]);
+    setCopiedRow(null);
+    setSelectedCell(null);
+    loadData();
+  }, [activeTab, loadData]);
 
   const handleSearch = (e) => {
     e.preventDefault();
     const p = {};
     if (filters.fish_name.trim()) p.fish_name = filters.fish_name.trim();
     if (filters.line_detail.trim()) p.location = filters.line_detail.trim();
-    loadInventory(p);
+    loadData(p);
   };
 
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    setFilters(prev => ({ ...prev, fish_name: '', line: '', line_detail: '', stack_no: '' }));
-    setEditedBalances({});
-    setEditedCsInDates({});
-  };
-
-  // Client-side filter by Line (L/R) and Stack No
-  const filteredInventory = useMemo(() => {
-    let list = inventory;
+  // ─── Client-side filters ─────────────────────────────────────────────
+  const filteredRows = useMemo(() => {
+    let list = rows;
     if (filters.line) {
-      list = list.filter(row => {
-        const parsed = parseLocationCode(row.line_place);
-        return parsed && parsed.side === filters.line;
+      list = list.filter(r => {
+        const p = parseLocationCode(r.line_place);
+        return p && p.side === filters.line;
       });
     }
-    if (filters.stack_no !== '' && filters.stack_no != null) {
-      const sn = String(filters.stack_no).trim();
-      if (sn !== '') {
-        list = list.filter(row => String(row.stack_no || '').includes(sn));
-      }
+    if (filters.stack_no) {
+      const sn = filters.stack_no.trim();
+      if (sn) list = list.filter(r => String(r.stack_no || '').includes(sn));
     }
     return list;
-  }, [inventory, filters.line, filters.stack_no]);
+  }, [rows, filters.line, filters.stack_no]);
 
-  const totalMC = filteredInventory.reduce((sum, r) => sum + getBalance(r), 0);
-  const totalKG = filteredInventory.reduce((sum, r) => {
-    const mc = getBalance(r);
-    const bulkKg = Number(r.bulk_weight_kg) || 0;
-    return sum + mc * bulkKg;
-  }, 0);
-  const totalStacks = new Set(filteredInventory.map(r => `${r.line_place}-${r.stack_no}`)).size;
-  const hasEdits = Object.keys(editedBalances).length > 0 || Object.keys(editedCsInDates).length > 0;
-
-  const handleSaveAll = async () => {
-    if (!hasEdits) return;
-    setSaving(true);
-    try {
-      const balancePromises = Object.entries(editedBalances).map(([key, newMc]) => {
-        const [lot_id, location_id] = key.split('-').map(Number);
-        return adjustInventoryBalance({ lot_id, location_id, new_balance_mc: newMc });
-      });
-      await Promise.all(balancePromises);
-
-      for (const [lotIdStr, newDate] of Object.entries(editedCsInDates)) {
-        await updateLotCsInDate(Number(lotIdStr), newDate);
-      }
-
-      toast.success('All changes saved. Stock Table and other pages will show updated data.');
-      setEditedBalances({});
-      setEditedCsInDates({});
-      loadInventory();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to save changes');
-    } finally {
-      setSaving(false);
-    }
+  // ─── Cell Editing (local only — saved via Save button) ───────────────
+  const handleCellChange = (rowIdx, col, newVal) => {
+    const rowKey = rk(rows[rowIdx]);
+    setRows(prev => prev.map((r, i) => i !== rowIdx ? r : { ...r, [col.key]: newVal }));
+    setUndoStack(prev => [...prev, {
+      type: 'edit', rowKey, colKey: col.key,
+      oldValue: rows[rowIdx][col.key], newValue: newVal,
+    }]);
   };
 
-  if (loading && inventory.length === 0) {
-    return <div className="loading"><div className="spinner"></div>Loading manual stock...</div>;
-  }
+  // ─── Save All ────────────────────────────────────────────────────────
+  const handleSaveAll = async () => {
+    const edits = Object.values(pendingEdits);
+    if (edits.length === 0) return;
+    setSaving(true);
+    let ok = 0;
+    let fail = 0;
+    for (const edit of edits) {
+      try {
+        await manualUpdateCell(edit);
+        ok++;
+      } catch { fail++; }
+    }
+    setSaving(false);
+    if (fail > 0) toast.error(`${fail} edit(s) failed to save`);
+    if (ok > 0) toast.success(`${ok} edit(s) saved successfully`);
+    setUndoStack([]);
+    loadData();
+  };
+
+  // ─── Discard All ─────────────────────────────────────────────────────
+  const handleDiscardAll = () => {
+    if (!isDirty) return;
+    if (!window.confirm('Discard all unsaved changes?')) return;
+    setRows(originalRows.map(r => ({ ...r })));
+    setUndoStack([]);
+    toast.info('Changes discarded');
+  };
+
+  // ─── Row Operations ──────────────────────────────────────────────────
+  const handleAddRow = async () => {
+    try {
+      const res = await manualAddRow({ stock_type: activeTab });
+      if (res.data.row) {
+        setRows(prev => [...prev, res.data.row]);
+        setOriginalRows(prev => [...prev, { ...res.data.row }]);
+        toast.success('New row added');
+      }
+    } catch { toast.error('Failed to add row'); }
+  };
+
+  const handleDeleteRow = async (rowIdx) => {
+    const row = filteredRows[rowIdx];
+    if (!row) return;
+    if (!window.confirm(`Delete row: ${row.fish_name} / ${row.line_place}?`)) return;
+    try {
+      await manualDeleteRow(row.lot_id, row.location_id);
+      const key = rk(row);
+      setRows(prev => prev.filter(r => rk(r) !== key));
+      setOriginalRows(prev => prev.filter(r => rk(r) !== key));
+      toast.success('Row deleted');
+    } catch { toast.error('Delete failed'); }
+  };
+
+  const handleDuplicateRow = async (rowIdx) => {
+    const src = filteredRows[rowIdx];
+    if (!src) return;
+    try {
+      const initial = {
+        fish_name: src.fish_name, size: src.size, bulk_weight_kg: src.bulk_weight_kg,
+        type: src.type, glazing: src.glazing, order_code: src.order_code,
+        cs_in_date: toDateOnly(src.cs_in_date), sticker: src.sticker,
+        remark: src.remark, st_no: src.st_no,
+        hand_on_balance_mc: src.hand_on_balance_mc,
+        line_place: `${src.line_place}-CPY`, stack_no: src.stack_no, stack_total: src.stack_total,
+      };
+      const res = await manualAddRow({ stock_type: activeTab, initial });
+      if (res.data.row) {
+        setRows(prev => [...prev, res.data.row]);
+        setOriginalRows(prev => [...prev, { ...res.data.row }]);
+        toast.success('Row duplicated');
+      }
+    } catch { toast.error('Duplicate failed'); }
+  };
+
+  // ─── Undo (Ctrl+Z) — local only ─────────────────────────────────────
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const action = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+    if (action.type === 'edit') {
+      setRows(prev => prev.map(r =>
+        rk(r) === action.rowKey ? { ...r, [action.colKey]: action.oldValue } : r
+      ));
+      toast.info('Undone');
+    }
+  }, [undoStack]);
+
+  // ─── Drag-down Fill ──────────────────────────────────────────────────
+  const filteredRef = useRef(filteredRows);
+  useEffect(() => { filteredRef.current = filteredRows; }, [filteredRows]);
+
+  const startDrag = useCallback((e, sourceRowIdx, colKey) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const fRows = filteredRef.current;
+    const sourceVal = fRows[sourceRowIdx]?.[colKey];
+    dragRef.current = { sourceRowIdx, colKey, value: sourceVal, targetRowIdx: sourceRowIdx };
+
+    const onMove = (me) => {
+      if (!dragRef.current || !tableRef.current) return;
+      const trs = Array.from(tableRef.current.querySelectorAll('tbody tr'));
+      for (let i = 0; i < trs.length; i++) {
+        const rect = trs[i].getBoundingClientRect();
+        if (me.clientY >= rect.top && me.clientY <= rect.bottom) {
+          dragRef.current.targetRowIdx = i;
+          setDragTarget(i);
+          return;
+        }
+      }
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      if (!dragRef.current) return;
+      const { sourceRowIdx: sIdx, colKey: cKey, value: val, targetRowIdx: tIdx } = dragRef.current;
+      dragRef.current = null;
+      setDragTarget(null);
+      if (sIdx === tIdx) return;
+
+      const startI = Math.min(sIdx, tIdx);
+      const endI = Math.max(sIdx, tIdx);
+      const fCurrent = filteredRef.current;
+      const col = columnsRef.current.find(c => c.key === cKey);
+      if (!col || !col.editable) return;
+
+      for (let i = startI; i <= endI; i++) {
+        if (i === sIdx) continue;
+        const r = fCurrent[i];
+        if (!r) continue;
+        const key = rk(r);
+        const oldVal = r[cKey];
+        setRows(prev => prev.map(row => rk(row) === key ? { ...row, [cKey]: val } : row));
+        setUndoStack(prev => [...prev, { type: 'edit', rowKey: key, colKey: cKey, oldValue: oldVal, newValue: val }]);
+      }
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  // ─── Keyboard Shortcuts ──────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.ctrlKey && e.key === 'z') { e.preventDefault(); handleUndo(); }
+      if (e.ctrlKey && e.key === 's') { e.preventDefault(); handleSaveAll(); }
+      if (e.ctrlKey && e.key === 'c' && selectedCell != null) {
+        const row = filteredRows[selectedCell];
+        if (row) { setCopiedRow({ ...row }); toast.info('Row copied'); }
+      }
+      if (e.ctrlKey && e.key === 'v' && copiedRow) {
+        e.preventDefault();
+        handlePaste();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  });
+
+  const handlePaste = async () => {
+    if (!copiedRow) return;
+    try {
+      const src = copiedRow;
+      const res = await manualAddRow({
+        stock_type: activeTab,
+        initial: {
+          fish_name: src.fish_name, size: src.size, bulk_weight_kg: src.bulk_weight_kg,
+          type: src.type, glazing: src.glazing, order_code: src.order_code,
+          cs_in_date: toDateOnly(src.cs_in_date), sticker: src.sticker,
+          remark: src.remark, st_no: src.st_no,
+          hand_on_balance_mc: src.hand_on_balance_mc,
+          line_place: `${src.line_place}-CPY`, stack_no: src.stack_no, stack_total: src.stack_total,
+        }
+      });
+      if (res.data.row) {
+        setRows(prev => [...prev, res.data.row]);
+        setOriginalRows(prev => [...prev, { ...res.data.row }]);
+        toast.success('Row pasted');
+      }
+    } catch { toast.error('Paste failed'); }
+  };
+
+  // ─── Summaries ───────────────────────────────────────────────────────
+  const totalMC = filteredRows.reduce((s, r) => s + (Number(r.hand_on_balance_mc) || 0), 0);
+  const totalKG = filteredRows.reduce((s, r) => s + (Number(r.bulk_weight_kg) || 0) * (Number(r.hand_on_balance_mc) || 0), 0);
+  const editCount = Object.keys(pendingEdits).length;
+
+  // ─── Render ──────────────────────────────────────────────────────────
+  if (loading && rows.length === 0) return <div className="loading"><div className="spinner"></div>Loading...</div>;
 
   return (
     <>
+      {/* Unsaved changes banner */}
+      {isDirty && (
+        <div className="ms-dirty-banner">
+          <FiAlertTriangle /> You have <b>{editCount}</b> unsaved change(s).
+          <button className="btn btn-primary btn-sm" onClick={handleSaveAll} disabled={saving} style={{ marginLeft: 12 }}>
+            <FiSave /> {saving ? 'Saving...' : 'Save All'}
+          </button>
+          <button className="btn btn-outline btn-sm" onClick={handleDiscardAll} style={{ marginLeft: 6 }}>
+            Discard
+          </button>
+        </div>
+      )}
+
       <div className="page-header">
         <h2>Manual</h2>
-        {hasEdits && (
-          <button type="button" className="btn btn-primary" onClick={handleSaveAll} disabled={saving}>
-            <FiSave /> {saving ? 'Saving...' : 'Save all changes'}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-outline btn-sm" onClick={handleUndo} disabled={undoStack.length === 0} title="Undo (Ctrl+Z)">
+            <FiRotateCcw /> Undo {undoStack.length > 0 && `(${undoStack.length})`}
           </button>
-        )}
+          <button className="btn btn-success btn-sm" onClick={handleSaveAll} disabled={!isDirty || saving} title="Save all (Ctrl+S)">
+            <FiSave /> {saving ? 'Saving...' : `Save${editCount > 0 ? ` (${editCount})` : ''}`}
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={handleAddRow} title="Add blank row">
+            <FiPlus /> Add Row
+          </button>
+        </div>
       </div>
       <div className="page-body">
-        {/* Tabs — editable */}
         <div className="stock-type-tabs">
           {TABS.map(tab => (
-            <button
-              key={tab.id}
-              type="button"
+            <button key={tab.id} type="button"
               className={`stock-type-tab ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => handleTabChange(tab.id)}
-            >
+              onClick={() => {
+                if (isDirty && !window.confirm('You have unsaved changes. Switch tab? Changes will be lost.')) return;
+                setActiveTab(tab.id);
+              }}>
               {tab.icon} {tab.label}
             </button>
           ))}
         </div>
 
-        {/* Search section — all fields editable */}
         <form className="manual-search-form" onSubmit={handleSearch}>
           <div className="manual-search-row">
             <div className="form-group">
               <label>Fish Name</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Search fish name..."
-                value={filters.fish_name}
-                onChange={e => setFilters(prev => ({ ...prev, fish_name: e.target.value }))}
-              />
+              <input type="text" className="form-control" placeholder="Search..."
+                value={filters.fish_name} onChange={e => setFilters(f => ({ ...f, fish_name: e.target.value }))} />
             </div>
             <div className="form-group">
-              <label>Line (L / R)</label>
-              <select
-                className="form-control"
-                value={filters.line}
-                onChange={e => setFilters(prev => ({ ...prev, line: e.target.value }))}
-              >
-                {LINE_OPTIONS.map(opt => (
-                  <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
-                ))}
+              <label>Line (L/R)</label>
+              <select className="form-control" value={filters.line}
+                onChange={e => setFilters(f => ({ ...f, line: e.target.value }))}>
+                {LINE_OPTIONS.map(o => <option key={o.value || 'all'} value={o.value}>{o.label}</option>)}
               </select>
             </div>
             <div className="form-group">
               <label>Line Detail</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="e.g. A01, CC01, line place..."
-                value={filters.line_detail}
-                onChange={e => setFilters(prev => ({ ...prev, line_detail: e.target.value }))}
-              />
+              <input type="text" className="form-control" placeholder="e.g. A01, Q01..."
+                value={filters.line_detail} onChange={e => setFilters(f => ({ ...f, line_detail: e.target.value }))} />
             </div>
             <div className="form-group">
               <label>Stack No</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Stack number..."
-                value={filters.stack_no}
-                onChange={e => setFilters(prev => ({ ...prev, stack_no: e.target.value }))}
-              />
+              <input type="text" className="form-control" placeholder="Stack..."
+                value={filters.stack_no} onChange={e => setFilters(f => ({ ...f, stack_no: e.target.value }))} />
             </div>
             <div className="form-group manual-search-actions">
-              <button type="submit" className="btn btn-primary">
-                <FiSearch /> Search
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setFilters({ fish_name: '', line: '', line_detail: '', stack_no: '' })}
-              >
-                Clear
-              </button>
+              <button type="submit" className="btn btn-primary"><FiSearch /> Search</button>
+              <button type="button" className="btn btn-outline"
+                onClick={() => setFilters({ fish_name: '', line: '', line_detail: '', stack_no: '' })}>Clear</button>
             </div>
           </div>
         </form>
 
-        {/* Summary */}
-        <div className="dashboard-grid" style={{ marginBottom: 16 }}>
-          <div className="stat-card">
-            <div className="stat-info">
-              <h4>Total MC</h4>
-              <div className="stat-value" style={{ fontSize: '1.3rem' }}>{totalMC.toLocaleString()}</div>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-info">
-              <h4>Total KG</h4>
-              <div className="stat-value" style={{ fontSize: '1.3rem' }}>{totalKG.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-info">
-              <h4>Rows</h4>
-              <div className="stat-value" style={{ fontSize: '1.3rem' }}>{filteredInventory.length}</div>
-            </div>
-          </div>
+        <div className="dashboard-grid" style={{ marginBottom: 12 }}>
+          <div className="stat-card"><div className="stat-info"><h4>Total MC</h4><div className="stat-value" style={{ fontSize: '1.3rem' }}>{totalMC.toLocaleString()}</div></div></div>
+          <div className="stat-card"><div className="stat-info"><h4>Total KG</h4><div className="stat-value" style={{ fontSize: '1.3rem' }}>{totalKG.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div></div></div>
+          <div className="stat-card"><div className="stat-info"><h4>Rows</h4><div className="stat-value" style={{ fontSize: '1.3rem' }}>{filteredRows.length}</div></div></div>
         </div>
 
-        {/* Table — same as Stock Table, data from Stock Table */}
-        <div className="table-container" style={{ maxHeight: '60vh', overflow: 'auto' }}>
-          {isCE ? (
-            <table className="excel-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 40 }}>#</th>
-                  <th>Order</th>
-                  <th>Fish Name</th>
-                  <th>Size</th>
-                  <th>Packed Size (KG)</th>
-                  <th>Production Date</th>
-                  <th>Expiration Date</th>
-                  <th>Total KG</th>
-                  <th style={{ background: '#5c1a1a', color: '#f8d7da' }}>Balance MC</th>
-                  <th>St No</th>
-                  <th>Line</th>
-                  <th>Stack No</th>
-                  <th>Remark</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredInventory.length === 0 ? (
-                  <tr>
-                    <td colSpan="13" style={{ textAlign: 'center', padding: 60, color: '#999' }}>
-                      No Container Extra stock found. Adjust filters or upload data via Excel Upload.
-                    </td>
-                  </tr>
-                ) : filteredInventory.map((r, i) => (
-                  <tr key={rowKey(r)}>
-                    <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
-                    <td><strong>{r.order_code || '-'}</strong></td>
-                    <td><strong>{r.fish_name}</strong></td>
-                    <td>{r.size}</td>
-                    <td className="num-cell">{Number(r.bulk_weight_kg).toFixed(0)} KG</td>
-                    <td>{r.production_date || '-'}</td>
-                    <td>{r.expiration_date || '-'}</td>
-                    <td className="num-cell">{Number(r.bulk_weight_kg) * getBalance(r)} KG</td>
-                    <td className="num-cell manual-editable-cell" style={{ background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' }}>
-                      <input
-                        type="number"
-                        min={0}
-                        className="manual-balance-input"
-                        value={editedBalances[rowKey(r)] !== undefined ? editedBalances[rowKey(r)] : r.hand_on_balance_mc}
-                        onChange={e => setBalance(r, e.target.value)}
-                      />
-                    </td>
-                    <td>{r.st_no || '-'}</td>
-                    <td><strong>{r.line_place}</strong></td>
-                    <td className="num-cell">{r.stack_no}</td>
-                    <td>{r.remark || '-'}</td>
-                  </tr>
+        <div className="ms-hint">
+          Click any cell to edit · <b>Ctrl+S</b> Save · <b>Ctrl+Z</b> Undo · <b>Ctrl+C</b> Copy row · <b>Ctrl+V</b> Paste · Drag blue handle to fill down
+        </div>
+
+        <div className="ms-wrap" ref={tableRef}>
+          <table className="ms-table">
+            <thead>
+              <tr>
+                <th className="ms-th-num">#</th>
+                {columns.map(col => (
+                  <th key={col.key} style={{ minWidth: col.w, ...(col.headerStyle || {}) }}>
+                    {col.label}
+                    {col.formula && <span className="ms-fx"> ƒ</span>}
+                  </th>
                 ))}
-              </tbody>
-              {filteredInventory.length > 0 && (
-                <tfoot>
-                  <tr>
-                    <td colSpan="7" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
-                    <td className="num-cell">{totalKG.toFixed(0)} KG</td>
-                    <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>
-                    <td colSpan="4"></td>
+                <th className="ms-th-act"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.length === 0 ? (
+                <tr><td colSpan={columns.length + 2} style={{ textAlign: 'center', padding: 60, color: '#999' }}>
+                  No data. Click "Add Row" or upload via Excel Upload.
+                </td></tr>
+              ) : filteredRows.map((row, rowIdx) => {
+                const isDragHL = dragTarget != null && dragRef.current &&
+                  rowIdx >= Math.min(dragRef.current.sourceRowIdx, dragTarget) &&
+                  rowIdx <= Math.max(dragRef.current.sourceRowIdx, dragTarget);
+                const orig = originalRows.find(o => rk(o) === rk(row));
+                return (
+                  <tr key={rk(row)}
+                    className={`${selectedCell === rowIdx ? 'ms-row-sel' : ''} ${isDragHL ? 'ms-drag-hl' : ''}`}>
+                    <td className="ms-num" onClick={() => setSelectedCell(rowIdx)} title="Select row">{rowIdx + 1}</td>
+                    {columns.map(col => {
+                      const isActive = selectedCell === rowIdx;
+                      if (!col.editable) {
+                        const display = col.formula ? getCellDisplay(row, col) : (row[col.key] ?? '-');
+                        return (
+                          <td key={col.key} className="ms-cell ms-cell-ro">
+                            {col.formula ? Number(display).toLocaleString(undefined, { maximumFractionDigits: 2 }) : display}
+                          </td>
+                        );
+                      }
+                      const val = col.type === 'date' ? toDateOnly(row[col.key]) : (row[col.key] ?? '');
+                      const origVal = orig ? (col.type === 'date' ? toDateOnly(orig[col.key]) : String(orig[col.key] ?? '')) : val;
+                      const isChanged = String(val) !== String(origVal);
+                      return (
+                        <td key={col.key} className={`ms-cell ms-cell-ed ${isActive ? 'ms-cell-active' : ''} ${isChanged ? 'ms-cell-dirty' : ''}`}>
+                          <input
+                            className={`ms-input ${col.type === 'number' ? 'ms-input-num' : ''}`}
+                            type={col.type === 'date' ? 'date' : col.type === 'number' ? 'number' : 'text'}
+                            value={val}
+                            onChange={e => handleCellChange(rows.indexOf(row), col, e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Tab' || e.key === 'Enter') e.currentTarget.blur();
+                            }}
+                          />
+                          {isActive && (
+                            <div className="ms-drag-handle" onMouseDown={e => startDrag(e, rowIdx, col.key)} title="Drag to fill down" />
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="ms-act">
+                      <button className="ms-btn-copy" onClick={() => handleDuplicateRow(rowIdx)} title="Duplicate"><FiCopy size={13} /></button>
+                      <button className="ms-btn-del" onClick={() => handleDeleteRow(rowIdx)} title="Delete"><FiTrash2 size={13} /></button>
+                    </td>
                   </tr>
-                </tfoot>
-              )}
-            </table>
-          ) : (
-            <table className="excel-table">
-              <thead>
+                );
+              })}
+            </tbody>
+            {filteredRows.length > 0 && (
+              <tfoot>
                 <tr>
-                  <th style={{ width: 40 }}>#</th>
-                  <th>Fish Name</th>
-                  <th>Size</th>
-                  <th>Bulk Wt (KG)</th>
-                  <th>Type</th>
-                  <th>Glazing</th>
-                  <th>CS In Date</th>
-                  <th>Sticker</th>
-                  <th>Lines / Place</th>
-                  <th>Stack No</th>
-                  <th>Stack Total</th>
-                  <th style={{ background: '#2d4a1e', color: '#d4edda' }}>Old Balance</th>
-                  <th style={{ background: '#1a3a5c', color: '#cce5ff' }}>New Income</th>
-                  <th style={{ background: '#5c1a1a', color: '#f8d7da' }}>Hand On Balance</th>
-                  <th>KG</th>
+                  <td className="ms-num"></td>
+                  {columns.map(col => {
+                    if (col.key === 'hand_on_balance_mc') return <td key={col.key} className="ms-foot-num">{totalMC.toLocaleString()}</td>;
+                    if (col.key === '_kg_total') return <td key={col.key} className="ms-foot-num">{totalKG.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>;
+                    if (col.key === 'fish_name') return <td key={col.key} style={{ fontWeight: 700, textAlign: 'right', padding: '6px 8px' }}>TOTALS:</td>;
+                    return <td key={col.key}></td>;
+                  })}
+                  <td></td>
                 </tr>
-              </thead>
-              <tbody>
-                {filteredInventory.length === 0 ? (
-                  <tr>
-                    <td colSpan="15" style={{ textAlign: 'center', padding: 60, color: '#999' }}>
-                      No stock data found. Adjust filters or record Stock IN first.
-                    </td>
-                  </tr>
-                ) : filteredInventory.map((r, i) => (
-                  <tr key={rowKey(r)}>
-                    <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
-                    <td><strong>{r.fish_name}</strong></td>
-                    <td>{r.size}</td>
-                    <td className="num-cell">{Number(r.bulk_weight_kg).toFixed(2)}</td>
-                    <td>{r.type || '-'}</td>
-                    <td>{r.glazing || '-'}</td>
-                    <td className="manual-editable-cell">
-                      <input
-                        type="date"
-                        className="manual-date-input"
-                        value={getCsInDate(r)}
-                        onChange={e => setCsInDate(r.lot_id, e.target.value)}
-                      />
-                    </td>
-                    <td>{r.sticker || '-'}</td>
-                    <td><strong>{r.line_place}</strong></td>
-                    <td className="num-cell">{r.stack_no}</td>
-                    <td className="num-cell">{r.stack_total}</td>
-                    <td className="num-cell" style={{ background: '#f0fdf4' }}>{r.old_balance_mc}</td>
-                    <td className="num-cell" style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: 600 }}>{r.new_income_mc || '-'}</td>
-                    <td className="num-cell manual-editable-cell" style={{ background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' }}>
-                      <input
-                        type="number"
-                        min={0}
-                        className="manual-balance-input"
-                        value={editedBalances[rowKey(r)] !== undefined ? editedBalances[rowKey(r)] : r.hand_on_balance_mc}
-                        onChange={e => setBalance(r, e.target.value)}
-                      />
-                    </td>
-                    <td className="num-cell">{Number(r.bulk_weight_kg) * getBalance(r)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              {filteredInventory.length > 0 && (
-                <tfoot>
-                  <tr>
-                    <td colSpan="11" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
-                    <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.old_balance_mc), 0)}</td>
-                    <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.new_income_mc), 0)}</td>
-                    <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>
-                    <td className="num-cell">{totalKG.toFixed(2)}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          )}
+              </tfoot>
+            )}
+          </table>
         </div>
       </div>
     </>

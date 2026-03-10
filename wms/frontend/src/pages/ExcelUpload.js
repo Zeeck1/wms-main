@@ -1,16 +1,18 @@
 import React, { useState, useRef } from 'react';
-import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiPackage, FiBox } from 'react-icons/fi';
+import { FiUpload, FiFile, FiCheckCircle, FiAlertCircle, FiPackage, FiBox, FiAnchor } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { uploadExcel, uploadContainerExtra } from '../services/api';
+import { uploadExcel, uploadContainerExtra, uploadImport } from '../services/api';
 
 const TABS = [
   { id: 'BULK', label: 'Bulk Stock', icon: <FiPackage /> },
-  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> }
+  { id: 'CONTAINER_EXTRA', label: 'Container Extra', icon: <FiBox /> },
+  { id: 'IMPORT', label: 'Import', icon: <FiAnchor /> }
 ];
 
 const COLUMN_HELP = {
   BULK: 'Fish Name, Size, Bulk Weight (KG), Type, Glazing, CS In Date, Sticker, Lines / Place, Stack No, Stack Total, Hand On Balance',
-  CONTAINER_EXTRA: 'Order, Fish Name, Size, Packed size, Production/Packed Date, Expiration Date, Balance MC, St No, Line, Remark'
+  CONTAINER_EXTRA: 'Order, Fish Name, Size, Packed size, Production/Packed Date, Expiration Date, Balance MC, St No, Line, Remark',
+  IMPORT: 'Fish Name, Size, KG, MC, Total KG, Arrival Date, LINE, Invoice No, Remark'
 };
 
 function ExcelUpload() {
@@ -47,7 +49,7 @@ function ExcelUpload() {
     setUploading(true);
     setResult(null);
     try {
-      const uploadFn = activeTab === 'CONTAINER_EXTRA' ? uploadContainerExtra : uploadExcel;
+      const uploadFn = activeTab === 'CONTAINER_EXTRA' ? uploadContainerExtra : activeTab === 'IMPORT' ? uploadImport : uploadExcel;
       const res = await uploadFn(file);
       setResult(res.data);
       toast.success(`Import completed: ${res.data.imported} rows imported`);
@@ -79,7 +81,7 @@ function ExcelUpload() {
 
         <div className="card" style={{ maxWidth: 700 }}>
           <div className="card-header">
-            <h3>Import {activeTab === 'CONTAINER_EXTRA' ? 'Container Extra' : 'Bulk Stock'} Data from Excel</h3>
+            <h3>Import {activeTab === 'CONTAINER_EXTRA' ? 'Container Extra' : activeTab === 'IMPORT' ? 'Import Stock' : 'Bulk Stock'} Data from Excel</h3>
           </div>
           <div className="card-body">
             <div className="alert alert-info">
