@@ -160,7 +160,7 @@ function StockTable() {
   const [activeTab, setActiveTab] = useState('BULK');
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ fish_name: '', location: '', lot_no: '' });
+  const [searchQuery, setSearchQuery] = useState('');
   const [columnFilters, setColumnFilters] = useState({});
 
   const isCE = activeTab === 'CONTAINER_EXTRA';
@@ -168,9 +168,9 @@ function StockTable() {
   const isNonBulk = isCE || isImport;
   const columns = isNonBulk ? CE_IMPORT_COLUMNS : BULK_COLUMNS;
 
-  const fetchInventory = useCallback(async (searchFilters = {}) => {
+  const fetchInventory = useCallback(async () => {
     try {
-      const res = await getInventory({ ...searchFilters, stock_type: activeTab });
+      const res = await getInventory({ stock_type: activeTab });
       setInventory(res.data);
     } catch (err) {
       toast.error('Failed to load inventory');
@@ -181,9 +181,9 @@ function StockTable() {
 
   useEffect(() => {
     setLoading(true);
-    setFilters({ fish_name: '', location: '', lot_no: '' });
+    setSearchQuery('');
     setColumnFilters({});
-    fetchInventory({});
+    fetchInventory();
   }, [activeTab, fetchInventory]);
 
   const allColumnValues = useMemo(() => {
@@ -198,16 +198,27 @@ function StockTable() {
   }, [inventory, columns]);
 
   const filteredInventory = useMemo(() => {
-    return inventory.filter(row => {
-      return columns.every(({ key }) => {
+    let list = inventory;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(row =>
+        columns.some(({ key }) => {
+          const v = row[key];
+          const str = v != null && v !== '' ? String(v) : '';
+          return str.toLowerCase().includes(q);
+        })
+      );
+    }
+    return list.filter(row =>
+      columns.every(({ key }) => {
         const selected = columnFilters[key];
         if (!selected) return true;
         const v = row[key];
         const str = v != null && v !== '' ? String(v) : '(Blank)';
         return selected.has(str);
-      });
-    });
-  }, [inventory, columnFilters, columns]);
+      })
+    );
+  }, [inventory, columnFilters, columns, searchQuery]);
 
   const applyColumnFilter = (key, selected) => {
     const allVals = new Set(allColumnValues[key].map(v => v != null ? v : '(Blank)'));
@@ -224,11 +235,6 @@ function StockTable() {
 
   const activeFilterCount = Object.keys(columnFilters).length;
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    setLoading(true);
-    fetchInventory(filters);
-  };
 
   const handleDeleteAll = async () => {
     const label = isCE ? 'Container Extra' : isImport ? 'Import' : 'Bulk';
@@ -238,7 +244,7 @@ function StockTable() {
       const res = await deleteAllStockData({ stock_type: activeTab });
       toast.success(res.data.message || 'All stock data deleted');
       setLoading(true);
-      fetchInventory({});
+      fetchInventory();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to delete stock data');
     }
@@ -333,15 +339,18 @@ function StockTable() {
           ))}
         </div>
 
-        <form className="filter-bar" onSubmit={handleSearch}>
-          <input className="form-control" placeholder="Fish Name..." value={filters.fish_name}
-            onChange={e => setFilters({ ...filters, fish_name: e.target.value })} />
-          <input className="form-control" placeholder="Location..." value={filters.location}
-            onChange={e => setFilters({ ...filters, location: e.target.value })} />
-          {!isNonBulk && <input className="form-control" placeholder="Lot No..." value={filters.lot_no}
-            onChange={e => setFilters({ ...filters, lot_no: e.target.value })} />}
-          <button type="submit" className="btn btn-primary"><FiSearch /> Search</button>
-        </form>
+        <div className="filter-bar">
+          <div className="filter-bar-search-single">
+            <FiSearch className="filter-bar-search-icon" />
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Search all columns..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+        </div>
 
         {activeFilterCount > 0 && (
           <div className="gs-active-filters-bar">

@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FiArrowDownCircle, FiArrowUpCircle, FiSearch, FiPlus, FiTrash2, FiPrinter, FiChevronDown } from 'react-icons/fi';
+import React, { useState, useEffect, useCallback } from 'react';
+import { FiArrowDownCircle, FiArrowUpCircle, FiSearch, FiPlus, FiTrash2, FiPrinter } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  getCustomers, getCustomerDeposits, createDeposit,
-  getCustomerDepositItems, getCustomerWithdrawals, createCustomerWithdrawal
+  getCustomers, getCustomerDeposits, createDeposit, deleteAllDeposits,
+  getCustomerDepositItems, getCustomerWithdrawals, createCustomerWithdrawal, deleteAllWithdrawals
 } from '../services/api';
 
 const toDate = (d) => d ? (typeof d === 'string' ? d.split('T')[0] : new Date(d).toISOString().split('T')[0]) : '';
@@ -13,9 +13,11 @@ const EMPTY_ITEM = { receive_date: new Date().toISOString().split('T')[0], item_
 
 function CustomerStock() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const navState = location.state;
   const [customers, setCustomers] = useState([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState('');
-  const [activeTab, setActiveTab] = useState('IN');
+  const [selectedCustomerId, setSelectedCustomerId] = useState(navState?.customerId ? String(navState.customerId) : '');
+  const [activeTab, setActiveTab] = useState(navState?.tab || 'IN');
   const [loading, setLoading] = useState(true);
 
   // IN state
@@ -25,10 +27,13 @@ function CustomerStock() {
   const [savingIn, setSavingIn] = useState(false);
 
   // OUT state
+  const [outLotActive, setOutLotActive] = useState(false);
+  const [outLotDate, setOutLotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [outLotLabel, setOutLotLabel] = useState('');
   const [outSearch, setOutSearch] = useState({ cs_in_date: '', fish_name: '', lot_no: '' });
   const [availableItems, setAvailableItems] = useState([]);
   const [outCart, setOutCart] = useState([]);
-  const [outMeta, setOutMeta] = useState({ withdraw_date: new Date().toISOString().split('T')[0], doc_ref: '', withdrawer_name: '', inspector_name: '' });
+  const [outMeta, setOutMeta] = useState({ withdrawer_name: '', inspector_name: '' });
   const [pastWithdrawals, setPastWithdrawals] = useState([]);
   const [savingOut, setSavingOut] = useState(false);
   const [searchedOut, setSearchedOut] = useState(false);
@@ -57,10 +62,17 @@ function CustomerStock() {
     if (selectedCustomerId) { loadPastDeposits(); loadPastWithdrawals(); }
     setDepositItems([{ ...EMPTY_ITEM, seq_no: 1 }]);
     setDepositMeta(m => ({ ...m, doc_ref: '', receiver_name: '', inspector_name: '' }));
+    resetOutLot();
+  }, [selectedCustomerId, loadPastDeposits, loadPastWithdrawals]);
+
+  const resetOutLot = () => {
+    setOutLotActive(false);
+    setOutLotLabel('');
     setOutCart([]);
     setAvailableItems([]);
     setSearchedOut(false);
-  }, [selectedCustomerId, loadPastDeposits, loadPastWithdrawals]);
+    setOutMeta({ withdrawer_name: '', inspector_name: '' });
+  };
 
   // ─── IN Handlers ─────────────────────────────────────────────────────
   const addItem = () => setDepositItems(prev => [...prev, { ...EMPTY_ITEM, seq_no: prev.length + 1 }]);
@@ -82,7 +94,40 @@ function CustomerStock() {
     finally { setSavingIn(false); }
   };
 
-  // ─── OUT Handlers ────────────────────────────────────────────────────
+  // ─── Delete All Handlers ────────────────────────────────────────────────
+  const handleDeleteAllDeposits = async () => {
+    if (!selectedCustomerId) return;
+    if (!window.confirm('ลบรายการรับฝากทั้งหมดของลูกค้านี้? (จะลบรายการเบิกที่เกี่ยวข้องด้วย)')) return;
+    try {
+      await deleteAllDeposits(selectedCustomerId);
+      toast.success('ลบรายการรับฝากทั้งหมดสำเร็จ');
+      loadPastDeposits();
+      loadPastWithdrawals();
+    } catch { toast.error('ลบไม่สำเร็จ'); }
+  };
+
+  const handleDeleteAllWithdrawals = async () => {
+    if (!selectedCustomerId) return;
+    if (!window.confirm('ลบรายการเบิกทั้งหมดของลูกค้านี้?')) return;
+    try {
+      await deleteAllWithdrawals(selectedCustomerId);
+      toast.success('ลบรายการเบิกทั้งหมดสำเร็จ');
+      loadPastWithdrawals();
+    } catch { toast.error('ลบไม่สำเร็จ'); }
+  };
+
+  // ─── OUT LOT Handlers ─────────────────────────────────────────────────
+  const handleNewOutLot = () => {
+    if (!selectedCustomerId) return toast.error('เลือกลูกค้าก่อน');
+    setOutLotLabel(outLotDate);
+    setOutLotActive(true);
+    setOutCart([]);
+    setAvailableItems([]);
+    setSearchedOut(false);
+  };
+
+  const handleCancelOutLot = () => resetOutLot();
+
   const searchOutItems = async () => {
     if (!selectedCustomerId) return toast.error('เลือกลูกค้าก่อน');
     try {
@@ -114,11 +159,15 @@ function CustomerStock() {
     }
     setSavingOut(true);
     try {
-      await createCustomerWithdrawal(selectedCustomerId, { ...outMeta, items: valid });
+      await createCustomerWithdrawal(selectedCustomerId, {
+        withdraw_date: outLotDate,
+        doc_ref: outLotDate,
+        withdrawer_name: outMeta.withdrawer_name,
+        inspector_name: outMeta.inspector_name,
+        items: valid
+      });
       toast.success('บันทึกรายการเบิกสำเร็จ');
-      setOutCart([]);
-      setAvailableItems([]);
-      setSearchedOut(false);
+      resetOutLot();
       loadPastWithdrawals();
     } catch (err) { toast.error(err.response?.data?.error || 'บันทึกไม่สำเร็จ'); }
     finally { setSavingOut(false); }
@@ -130,7 +179,6 @@ function CustomerStock() {
     <>
       <div className="page-header"><h2>Customer</h2></div>
       <div className="page-body">
-        {/* Customer selector */}
         <div className="cs-customer-select">
           <label>เลือกลูกค้า</label>
           <select className="form-control" value={selectedCustomerId} onChange={e => setSelectedCustomerId(e.target.value)}>
@@ -141,7 +189,6 @@ function CustomerStock() {
 
         {selectedCustomerId && (
           <>
-            {/* Tabs */}
             <div className="stock-type-tabs" style={{ marginBottom: 16 }}>
               <button className={`stock-type-tab ${activeTab === 'IN' ? 'active' : ''}`} onClick={() => setActiveTab('IN')}>
                 <FiArrowDownCircle /> IN (รับฝาก)
@@ -215,24 +262,34 @@ function CustomerStock() {
                   {savingIn ? 'กำลังบันทึก...' : 'บันทึกรายการรับฝาก'}
                 </button>
 
-                {/* Past deposits */}
                 {pastDeposits.length > 0 && (
                   <div className="cs-past">
-                    <h4>รายการรับฝากที่ผ่านมา</h4>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <h4 style={{ margin: 0 }}>รายการรับฝากที่ผ่านมา</h4>
+                      <button className="btn btn-outline btn-sm" onClick={handleDeleteAllDeposits}
+                        style={{ color: '#ef4444', borderColor: '#fca5a5' }}>
+                        <FiTrash2 /> ลบทั้งหมด
+                      </button>
+                    </div>
                     <table className="excel-table">
-                      <thead><tr><th>#</th><th>วันที่</th><th>เลขที่เอกสาร</th><th>จำนวนรายการ</th><th>กล่องรวม</th><th></th></tr></thead>
+                      <thead><tr><th>#</th><th>วันที่รับ</th><th>เลขที่เอกสาร</th><th>จำนวนรายการ</th><th>กล่องรวม</th><th></th></tr></thead>
                       <tbody>
-                        {pastDeposits.map((d, i) => (
+                        {pastDeposits.map((d, i) => {
+                          const first = toDate(d.first_receive_date);
+                          const last = toDate(d.last_receive_date);
+                          const dateDisplay = first && last && first !== last ? `${first} ~ ${last}` : (first || toDate(d.deposit_date));
+                          return (
                           <tr key={d.id}>
                             <td className="text-center">{i + 1}</td>
-                            <td>{toDate(d.deposit_date)}</td>
+                            <td>{dateDisplay}</td>
                             <td>{d.doc_ref || '-'}</td>
                             <td className="num-cell">{d.item_count}</td>
                             <td className="num-cell">{d.total_boxes}</td>
                             <td><button className="btn btn-outline btn-sm" onClick={() => navigate(`/customer/print/${d.id}/0`)}>
                               <FiPrinter /> พิมพ์</button></td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -245,135 +302,163 @@ function CustomerStock() {
               <div className="cs-section">
                 <h3 className="cs-section-title"><FiArrowUpCircle /> รายการเบิกจ่ายสินค้า</h3>
 
-                <div className="cs-meta-row">
-                  <div className="form-group"><label>วันที่เบิก</label>
-                    <input type="date" className="form-control" value={outMeta.withdraw_date}
-                      onChange={e => setOutMeta(m => ({ ...m, withdraw_date: e.target.value }))} /></div>
-                  <div className="form-group"><label>เลขที่เอกสาร</label>
-                    <input className="form-control" placeholder="DS..." value={outMeta.doc_ref}
-                      onChange={e => setOutMeta(m => ({ ...m, doc_ref: e.target.value }))} /></div>
-                </div>
-
-                {/* Search deposited items */}
-                <div className="cs-out-search">
-                  <h4>ค้นหาสินค้าที่ฝาก</h4>
-                  <div className="cs-meta-row">
-                    <div className="form-group"><label>วันที่รับ (CS-IN)</label>
-                      <input type="date" className="form-control" value={outSearch.cs_in_date}
-                        onChange={e => setOutSearch(s => ({ ...s, cs_in_date: e.target.value }))} /></div>
-                    <div className="form-group"><label>รายการ (Fish Name)</label>
-                      <input className="form-control" value={outSearch.fish_name}
-                        onChange={e => setOutSearch(s => ({ ...s, fish_name: e.target.value }))} /></div>
-                    <div className="form-group"><label>Lot No.</label>
-                      <input className="form-control" value={outSearch.lot_no}
-                        onChange={e => setOutSearch(s => ({ ...s, lot_no: e.target.value }))} /></div>
-                    <div className="form-group" style={{ alignSelf: 'flex-end' }}>
-                      <button className="btn btn-primary" onClick={searchOutItems}><FiSearch /> ค้นหา</button>
+                {/* ── Step 1: Create New Out LOT ── */}
+                {!outLotActive && (
+                  <div className="cs-new-lot-box">
+                    <div className="cs-meta-row" style={{ alignItems: 'flex-end', marginBottom: 12 }}>
+                      <div className="form-group">
+                        <label>วันที่เบิก</label>
+                        <input type="date" className="form-control" value={outLotDate}
+                          onChange={e => setOutLotDate(e.target.value)} />
+                      </div>
+                      <div className="form-group" style={{ flex: 'none' }}>
+                        <button className="btn btn-primary" onClick={handleNewOutLot}>
+                          <FiPlus /> New Out LOT
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
-                {/* Available items */}
-                {searchedOut && (
-                  <div style={{ marginBottom: 16 }}>
-                    <h4 style={{ marginBottom: 8 }}>สินค้าคงเหลือ ({availableItems.length} รายการ)</h4>
-                    {availableItems.length === 0 ? (
-                      <div style={{ padding: 30, textAlign: 'center', color: '#999' }}>ไม่พบสินค้าคงเหลือ</div>
-                    ) : (
-                      <div className="table-container" style={{ overflow: 'auto', maxHeight: '30vh' }}>
-                        <table className="excel-table">
-                          <thead><tr><th>วันที่รับ</th><th>รายการ</th><th>LOT No.</th><th>กล่อง (ฝาก)</th><th>Kg. (ฝาก)</th><th>คงเหลือ กล่อง</th><th>คงเหลือ Kg.</th><th></th></tr></thead>
-                          <tbody>
-                            {availableItems.map(it => (
-                              <tr key={it.id}>
-                                <td>{toDate(it.receive_date)}</td>
-                                <td><strong>{it.item_name}</strong></td>
-                                <td>{it.lot_no || '-'}</td>
-                                <td className="num-cell">{it.boxes}</td>
-                                <td className="num-cell">{Number(it.weight_kg).toFixed(2)}</td>
-                                <td className="num-cell" style={{ fontWeight: 700, color: '#16a34a' }}>{it.balance_boxes}</td>
-                                <td className="num-cell" style={{ fontWeight: 700, color: '#16a34a' }}>{Number(it.balance_kg).toFixed(2)}</td>
-                                <td><button className="btn btn-primary btn-sm" onClick={() => addToOutCart(it)}>เลือก</button></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                {/* ── Step 2: Active LOT session ── */}
+                {outLotActive && (
+                  <>
+                    <div className="cs-lot-header">
+                      <div className="cs-lot-badge">
+                        <span className="cs-lot-label">Out LOT:</span>
+                        <span className="cs-lot-name">{outLotLabel}</span>
+                      </div>
+                      <button className="btn btn-outline btn-sm" onClick={handleCancelOutLot} style={{ color: '#ef4444' }}>ยกเลิก</button>
+                    </div>
+
+                    {/* Search deposited items */}
+                    <div className="cs-out-search">
+                      <h4>ค้นหาสินค้าที่ฝาก</h4>
+                      <div className="cs-meta-row">
+                        <div className="form-group"><label>วันที่รับ (CS-IN)</label>
+                          <input type="date" className="form-control" value={outSearch.cs_in_date}
+                            onChange={e => setOutSearch(s => ({ ...s, cs_in_date: e.target.value }))} /></div>
+                        <div className="form-group"><label>รายการ (Fish Name)</label>
+                          <input className="form-control" value={outSearch.fish_name}
+                            onChange={e => setOutSearch(s => ({ ...s, fish_name: e.target.value }))} /></div>
+                        <div className="form-group"><label>Lot No.</label>
+                          <input className="form-control" value={outSearch.lot_no}
+                            onChange={e => setOutSearch(s => ({ ...s, lot_no: e.target.value }))} /></div>
+                        <div className="form-group" style={{ alignSelf: 'flex-end' }}>
+                          <button className="btn btn-primary" onClick={searchOutItems}><FiSearch /> ค้นหา</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Available items */}
+                    {searchedOut && (
+                      <div style={{ marginBottom: 16 }}>
+                        <h4 style={{ marginBottom: 8 }}>สินค้าคงเหลือ ({availableItems.length} รายการ)</h4>
+                        {availableItems.length === 0 ? (
+                          <div style={{ padding: 30, textAlign: 'center', color: '#999' }}>ไม่พบสินค้าคงเหลือ</div>
+                        ) : (
+                          <div className="table-container" style={{ overflow: 'auto', maxHeight: '30vh' }}>
+                            <table className="excel-table">
+                              <thead><tr><th>วันที่รับ</th><th>รายการ</th><th>LOT No.</th><th>กล่อง (ฝาก)</th><th>Kg. (ฝาก)</th><th>คงเหลือ กล่อง</th><th>คงเหลือ Kg.</th><th></th></tr></thead>
+                              <tbody>
+                                {availableItems.map(it => (
+                                  <tr key={it.id}>
+                                    <td>{toDate(it.receive_date)}</td>
+                                    <td><strong>{it.item_name}</strong></td>
+                                    <td>{it.lot_no || '-'}</td>
+                                    <td className="num-cell">{it.boxes}</td>
+                                    <td className="num-cell">{Number(it.weight_kg).toFixed(2)}</td>
+                                    <td className="num-cell" style={{ fontWeight: 700, color: '#16a34a' }}>{it.balance_boxes}</td>
+                                    <td className="num-cell" style={{ fontWeight: 700, color: '#16a34a' }}>{Number(it.balance_kg).toFixed(2)}</td>
+                                    <td><button className="btn btn-primary btn-sm" onClick={() => addToOutCart(it)}>เลือก</button></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
 
-                {/* Cart */}
-                {outCart.length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <h4 style={{ marginBottom: 8 }}>รายการเบิก</h4>
-                    <div className="table-container" style={{ overflow: 'auto' }}>
-                      <table className="excel-table">
-                        <thead>
-                          <tr>
-                            <th style={{ width: 40 }}>#</th>
-                            <th>รายการ</th>
-                            <th>LOT No.</th>
-                            <th style={{ width: 90 }}>คงเหลือ กล่อง</th>
-                            <th style={{ width: 90 }}>เบิก กล่อง</th>
-                            <th style={{ width: 90 }}>เบิก KG</th>
-                            <th style={{ width: 80 }}>เวลา</th>
-                            <th style={{ width: 120 }}>หมายเหตุ</th>
-                            <th style={{ width: 40 }}></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {outCart.map((it, i) => (
-                            <tr key={i}>
-                              <td className="text-center">{i + 1}</td>
-                              <td><strong>{it.item_name}</strong></td>
-                              <td>{it.lot_no || '-'}</td>
-                              <td className="num-cell" style={{ color: '#16a34a' }}>{it.balance_boxes}</td>
-                              <td><input type="number" className="form-control form-control-sm" value={it.boxes_out}
-                                onChange={e => updateCartItem(i, 'boxes_out', e.target.value)} max={it.balance_boxes} /></td>
-                              <td><input type="number" step="0.01" className="form-control form-control-sm" value={it.weight_kg_out}
-                                onChange={e => updateCartItem(i, 'weight_kg_out', e.target.value)} /></td>
-                              <td><input className="form-control form-control-sm" value={it.time_str}
-                                onChange={e => updateCartItem(i, 'time_str', e.target.value)} /></td>
-                              <td><input className="form-control form-control-sm" value={it.remark}
-                                onChange={e => updateCartItem(i, 'remark', e.target.value)} /></td>
-                              <td><button className="btn btn-outline btn-sm" onClick={() => removeFromCart(i)} style={{ color: '#ef4444', padding: '2px 6px' }}><FiTrash2 size={13} /></button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+                    {/* Cart */}
+                    {outCart.length > 0 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <h4 style={{ marginBottom: 8 }}>รายการเบิก — {outLotLabel}</h4>
+                        <div className="table-container" style={{ overflow: 'auto' }}>
+                          <table className="excel-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: 40 }}>#</th>
+                                <th>รายการ</th>
+                                <th>LOT No.</th>
+                                <th style={{ width: 90 }}>คงเหลือ กล่อง</th>
+                                <th style={{ width: 90 }}>เบิก กล่อง</th>
+                                <th style={{ width: 90 }}>เบิก KG</th>
+                                <th style={{ width: 80 }}>เวลา</th>
+                                <th style={{ width: 120 }}>หมายเหตุ</th>
+                                <th style={{ width: 40 }}></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {outCart.map((it, i) => (
+                                <tr key={i}>
+                                  <td className="text-center">{i + 1}</td>
+                                  <td><strong>{it.item_name}</strong></td>
+                                  <td>{it.lot_no || '-'}</td>
+                                  <td className="num-cell" style={{ color: '#16a34a' }}>{it.balance_boxes}</td>
+                                  <td><input type="number" className="form-control form-control-sm" value={it.boxes_out}
+                                    onChange={e => updateCartItem(i, 'boxes_out', e.target.value)} max={it.balance_boxes} /></td>
+                                  <td><input type="number" step="0.01" className="form-control form-control-sm" value={it.weight_kg_out}
+                                    onChange={e => updateCartItem(i, 'weight_kg_out', e.target.value)} /></td>
+                                  <td><input className="form-control form-control-sm" value={it.time_str}
+                                    onChange={e => updateCartItem(i, 'time_str', e.target.value)} /></td>
+                                  <td><input className="form-control form-control-sm" value={it.remark}
+                                    onChange={e => updateCartItem(i, 'remark', e.target.value)} /></td>
+                                  <td><button className="btn btn-outline btn-sm" onClick={() => removeFromCart(i)} style={{ color: '#ef4444', padding: '2px 6px' }}><FiTrash2 size={13} /></button></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
-                {outCart.length > 0 && (
-                  <>
-                    <div className="cs-meta-row">
-                      <div className="form-group"><label>ผู้เบิกจ่ายสินค้า</label>
-                        <input className="form-control" value={outMeta.withdrawer_name}
-                          onChange={e => setOutMeta(m => ({ ...m, withdrawer_name: e.target.value }))} /></div>
-                      <div className="form-group"><label>ผู้ตรวจสอบ</label>
-                        <input className="form-control" value={outMeta.inspector_name}
-                          onChange={e => setOutMeta(m => ({ ...m, inspector_name: e.target.value }))} /></div>
-                    </div>
-                    <button className="btn btn-primary" onClick={handleSaveWithdrawal} disabled={savingOut}>
-                      {savingOut ? 'กำลังบันทึก...' : 'บันทึกรายการเบิก'}
-                    </button>
+                    {outCart.length > 0 && (
+                      <>
+                        <div className="cs-meta-row">
+                          <div className="form-group"><label>ผู้เบิกจ่ายสินค้า</label>
+                            <input className="form-control" value={outMeta.withdrawer_name}
+                              onChange={e => setOutMeta(m => ({ ...m, withdrawer_name: e.target.value }))} /></div>
+                          <div className="form-group"><label>ผู้ตรวจสอบ</label>
+                            <input className="form-control" value={outMeta.inspector_name}
+                              onChange={e => setOutMeta(m => ({ ...m, inspector_name: e.target.value }))} /></div>
+                        </div>
+                        <button className="btn btn-primary" onClick={handleSaveWithdrawal} disabled={savingOut}>
+                          {savingOut ? 'กำลังบันทึก...' : 'บันทึกรายการเบิก'}
+                        </button>
+                      </>
+                    )}
                   </>
                 )}
 
                 {/* Past withdrawals */}
                 {pastWithdrawals.length > 0 && (
                   <div className="cs-past" style={{ marginTop: 24 }}>
-                    <h4>รายการเบิกที่ผ่านมา</h4>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <h4 style={{ margin: 0 }}>รายการเบิกที่ผ่านมา</h4>
+                      <button className="btn btn-outline btn-sm" onClick={handleDeleteAllWithdrawals}
+                        style={{ color: '#ef4444', borderColor: '#fca5a5' }}>
+                        <FiTrash2 /> ลบทั้งหมด
+                      </button>
+                    </div>
                     <table className="excel-table">
-                      <thead><tr><th>#</th><th>วันที่</th><th>เลขที่เอกสาร</th><th>จำนวนรายการ</th><th>กล่องรวม</th><th></th></tr></thead>
+                      <thead><tr><th>#</th><th>Out LOT</th><th>วันที่</th><th>จำนวนรายการ</th><th>กล่องรวม</th><th></th></tr></thead>
                       <tbody>
                         {pastWithdrawals.map((w, i) => (
                           <tr key={w.id}>
                             <td className="text-center">{i + 1}</td>
+                            <td><strong>{w.doc_ref || '-'}</strong></td>
                             <td>{toDate(w.withdraw_date)}</td>
-                            <td>{w.doc_ref || '-'}</td>
                             <td className="num-cell">{w.item_count}</td>
                             <td className="num-cell">{w.total_boxes_out}</td>
                             <td><button className="btn btn-outline btn-sm"

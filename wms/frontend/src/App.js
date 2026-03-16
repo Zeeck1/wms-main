@@ -7,7 +7,7 @@ import {
   FiGrid, FiPackage, FiMapPin, FiArrowDownCircle,
   FiArrowUpCircle, FiTable, FiUpload, FiClock,
   FiMenu, FiX, FiChevronLeft, FiLayers, FiList,
-  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown, FiCalendar, FiUsers, FiUserCheck
+  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown, FiCalendar, FiUsers, FiUserCheck, FiClipboard
 } from 'react-icons/fi';
 
 import Dashboard from './pages/Dashboard';
@@ -29,6 +29,7 @@ import LinesReformat from './pages/LinesReformat';
 import CustomerMaster from './pages/CustomerMaster';
 import CustomerStock from './pages/CustomerStock';
 import CustomerPrint from './pages/CustomerPrint';
+import CustomerSummary from './pages/CustomerSummary';
 import NoMovementStocks from './pages/NoMovementStocks';
 import LowSafetyStocks from './pages/LowSafetyStocks';
 import Calendar from './pages/Calendar';
@@ -63,6 +64,7 @@ function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
 
       <div className="nav-section-title"><span>Customer</span></div>
       {link('/customer', <FiUserCheck />, 'Customer')}
+      {link('/customer-summary', <FiClipboard />, 'Summary')}
 
       <div className="nav-section-title"><span>Operations</span></div>
       {link('/stock-in', <FiArrowDownCircle />, 'Stock IN')}
@@ -179,6 +181,7 @@ function App() {
               <Route path="/customer-master" element={<CustomerMaster />} />
               <Route path="/customer" element={<CustomerStock />} />
               <Route path="/customer/print/:depositId/:withdrawalId" element={<CustomerPrint />} />
+              <Route path="/customer-summary" element={<CustomerSummary />} />
               <Route path="/stock-chart" element={<StockChart />} />
               <Route path="/upload" element={<ExcelUpload />} />
               <Route path="/withdraw" element={<Withdraw />} />

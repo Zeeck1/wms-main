@@ -10,6 +10,42 @@ router.get('/', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Summary (all deposit items with balance for a customer or all) ────
+router.get('/summary/all', async (req, res) => {
+  try {
+    const { customer_id } = req.query;
+    let sql = `
+      SELECT di.*, d.deposit_date, d.doc_ref, d.customer_id,
+        c.name AS customer_name,
+        COALESCE((SELECT SUM(wi.boxes_out) FROM customer_withdrawal_items wi WHERE wi.deposit_item_id = di.id), 0) AS total_out_boxes,
+        COALESCE((SELECT SUM(wi.weight_kg_out) FROM customer_withdrawal_items wi WHERE wi.deposit_item_id = di.id), 0) AS total_out_kg,
+        di.boxes - COALESCE((SELECT SUM(wi.boxes_out) FROM customer_withdrawal_items wi WHERE wi.deposit_item_id = di.id), 0) AS balance_boxes,
+        di.weight_kg - COALESCE((SELECT SUM(wi.weight_kg_out) FROM customer_withdrawal_items wi WHERE wi.deposit_item_id = di.id), 0) AS balance_kg
+      FROM customer_deposit_items di
+      JOIN customer_deposits d ON di.deposit_id = d.id
+      JOIN customers c ON d.customer_id = c.id`;
+    const params = [];
+    if (customer_id) { sql += ' WHERE d.customer_id = ?'; params.push(customer_id); }
+    sql += ' ORDER BY c.name ASC, di.receive_date DESC, di.seq_no ASC';
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/summary/detail/:depositItemId', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT wi.*, w.withdraw_date, w.doc_ref AS wd_doc_ref
+       FROM customer_withdrawal_items wi
+       JOIN customer_withdrawals w ON wi.withdrawal_id = w.id
+       WHERE wi.deposit_item_id = ?
+       ORDER BY w.withdraw_date ASC, wi.id ASC`,
+      [req.params.depositItemId]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM customers WHERE id = ?', [req.params.id]);
@@ -50,13 +86,39 @@ router.delete('/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Delete all deposits for a customer ──────────────────────────────────
+router.delete('/:id/deposits', async (req, res) => {
+  try {
+    const [deps] = await pool.query('SELECT id FROM customer_deposits WHERE customer_id = ?', [req.params.id]);
+    if (deps.length > 0) {
+      const ids = deps.map(d => d.id);
+      await pool.query('DELETE FROM customer_withdrawal_items WHERE deposit_item_id IN (SELECT id FROM customer_deposit_items WHERE deposit_id IN (?))', [ids]);
+      await pool.query('DELETE FROM customer_withdrawals WHERE customer_id = ?', [req.params.id]);
+      await pool.query('DELETE FROM customer_deposit_items WHERE deposit_id IN (?)', [ids]);
+      await pool.query('DELETE FROM customer_deposits WHERE customer_id = ?', [req.params.id]);
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Delete all withdrawals for a customer ───────────────────────────────
+router.delete('/:id/withdrawals', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM customer_withdrawal_items WHERE withdrawal_id IN (SELECT id FROM customer_withdrawals WHERE customer_id = ?)', [req.params.id]);
+    await pool.query('DELETE FROM customer_withdrawals WHERE customer_id = ?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Deposits (IN) ──────────────────────────────────────────────────────
 router.get('/:id/deposits', async (req, res) => {
   try {
     const [deps] = await pool.query(
       `SELECT d.*, c.name AS customer_name,
         (SELECT COUNT(*) FROM customer_deposit_items WHERE deposit_id = d.id) AS item_count,
-        (SELECT COALESCE(SUM(boxes),0) FROM customer_deposit_items WHERE deposit_id = d.id) AS total_boxes
+        (SELECT COALESCE(SUM(boxes),0) FROM customer_deposit_items WHERE deposit_id = d.id) AS total_boxes,
+        (SELECT MIN(receive_date) FROM customer_deposit_items WHERE deposit_id = d.id) AS first_receive_date,
+        (SELECT MAX(receive_date) FROM customer_deposit_items WHERE deposit_id = d.id) AS last_receive_date
        FROM customer_deposits d
        JOIN customers c ON d.customer_id = c.id
        WHERE d.customer_id = ?
@@ -200,9 +262,57 @@ router.post('/:id/withdrawals', async (req, res) => {
 router.get('/print/:depositId/:withdrawalId', async (req, res) => {
   try {
     const { depositId, withdrawalId } = req.params;
-    let deposit = null, withdrawal = null;
+    let deposit = null, withdrawal = null, withdrawalItems = [];
 
-    if (depositId && depositId !== '0') {
+    if (withdrawalId && withdrawalId !== '0') {
+      const [ws] = await pool.query(
+        `SELECT w.*, c.name AS customer_name, c.address, c.document_no, c.phone
+         FROM customer_withdrawals w JOIN customers c ON w.customer_id = c.id WHERE w.id = ?`, [withdrawalId]);
+      if (ws[0]) {
+        withdrawal = ws[0];
+        const customerId = ws[0].customer_id;
+
+        const [thisWdItems] = await pool.query(
+          'SELECT deposit_item_id FROM customer_withdrawal_items WHERE withdrawal_id = ?', [withdrawalId]);
+        const depItemIds = [...new Set(thisWdItems.map(i => i.deposit_item_id))];
+
+        if (depItemIds.length > 0) {
+          const [allWdItems] = await pool.query(
+            `SELECT wi.*, w.withdraw_date, w.id AS w_id,
+              di.item_name, di.lot_no, di.receive_date, di.deposit_id,
+              di.boxes AS orig_boxes, di.weight_kg AS orig_weight_kg, di.nw_unit
+             FROM customer_withdrawal_items wi
+             JOIN customer_withdrawals w ON wi.withdrawal_id = w.id
+             JOIN customer_deposit_items di ON wi.deposit_item_id = di.id
+             WHERE wi.deposit_item_id IN (?)
+             ORDER BY w.withdraw_date ASC, w.id ASC, wi.id ASC`,
+            [depItemIds]
+          );
+          withdrawalItems = allWdItems;
+
+          const [depItems] = await pool.query(
+            'SELECT * FROM customer_deposit_items WHERE id IN (?) ORDER BY seq_no', [depItemIds]);
+
+          const [cust] = await pool.query(
+            `SELECT c.name AS customer_name, c.address, c.document_no, c.phone
+             FROM customers c WHERE c.id = ?`, [customerId]);
+
+          const depIds = [...new Set(depItems.map(i => i.deposit_id))];
+          const [deps] = await pool.query(
+            'SELECT * FROM customer_deposits WHERE id IN (?) ORDER BY deposit_date ASC', [depIds]);
+
+          deposit = {
+            ...(cust[0] || {}),
+            ...(deps[0] || {}),
+            customer_id: customerId,
+            doc_ref: deps.map(d => d.doc_ref).filter(Boolean).join(', ') || cust[0]?.document_no,
+            receiver_name: deps[deps.length - 1]?.receiver_name || '',
+            inspector_name: deps[deps.length - 1]?.inspector_name || '',
+            items: depItems
+          };
+        }
+      }
+    } else if (depositId && depositId !== '0') {
       const [deps] = await pool.query(
         `SELECT d.*, c.name AS customer_name, c.address, c.document_no, c.phone
          FROM customer_deposits d JOIN customers c ON d.customer_id = c.id WHERE d.id = ?`, [depositId]);
@@ -212,23 +322,7 @@ router.get('/print/:depositId/:withdrawalId', async (req, res) => {
       }
     }
 
-    if (withdrawalId && withdrawalId !== '0') {
-      const [ws] = await pool.query(
-        `SELECT w.*, c.name AS customer_name, c.address, c.document_no, c.phone
-         FROM customer_withdrawals w JOIN customers c ON w.customer_id = c.id WHERE w.id = ?`, [withdrawalId]);
-      if (ws[0]) {
-        const [items] = await pool.query(
-          `SELECT wi.*, di.item_name, di.lot_no, di.receive_date, di.boxes AS orig_boxes, di.weight_kg AS orig_weight_kg, di.nw_unit,
-            di.boxes - COALESCE((SELECT SUM(wi2.boxes_out) FROM customer_withdrawal_items wi2 WHERE wi2.deposit_item_id = di.id), 0) AS remaining_boxes,
-            di.weight_kg - COALESCE((SELECT SUM(wi2.weight_kg_out) FROM customer_withdrawal_items wi2 WHERE wi2.deposit_item_id = di.id), 0) AS remaining_kg
-           FROM customer_withdrawal_items wi
-           JOIN customer_deposit_items di ON wi.deposit_item_id = di.id
-           WHERE wi.withdrawal_id = ? ORDER BY wi.id`, [withdrawalId]);
-        withdrawal = { ...ws[0], items };
-      }
-    }
-
-    res.json({ deposit, withdrawal });
+    res.json({ deposit, withdrawal, withdrawalItems });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

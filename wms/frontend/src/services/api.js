@@ -100,12 +100,16 @@ export const deleteCustomer = (id) => api.delete(`/customers/${id}`);
 export const getCustomerDeposits = (id) => api.get(`/customers/${id}/deposits`);
 export const getDeposit = (depositId) => api.get(`/customers/deposits/${depositId}`);
 export const createDeposit = (customerId, data) => api.post(`/customers/${customerId}/deposits`, data);
+export const deleteAllDeposits = (customerId) => api.delete(`/customers/${customerId}/deposits`);
 
 export const getCustomerDepositItems = (id, params) => api.get(`/customers/${id}/deposit-items`, { params });
 export const getCustomerWithdrawals = (id) => api.get(`/customers/${id}/withdrawals`);
 export const getWithdrawalDetail = (wId) => api.get(`/customers/withdrawals/${wId}`);
 export const createCustomerWithdrawal = (customerId, data) => api.post(`/customers/${customerId}/withdrawals`, data);
+export const deleteAllWithdrawals = (customerId) => api.delete(`/customers/${customerId}/withdrawals`);
 
 export const getCustomerPrintData = (depositId, withdrawalId) => api.get(`/customers/print/${depositId}/${withdrawalId}`);
+export const getCustomerSummary = (params) => api.get('/customers/summary/all', { params });
+export const getDepositItemDetail = (depositItemId) => api.get(`/customers/summary/detail/${depositItemId}`);
 
 export default api;

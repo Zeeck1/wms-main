@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FiShoppingCart, FiPlus, FiTrash2, FiSend, FiSearch,
-  FiPackage, FiCheck, FiChevronRight, FiClock, FiCheckCircle, FiXCircle, FiRefreshCw
+  FiPackage, FiCheck, FiChevronRight, FiClock, FiCheckCircle, FiXCircle, FiRefreshCw, FiBox, FiAnchor
 } from 'react-icons/fi';
 import { TbForklift } from 'react-icons/tb';
 import { toast } from 'react-toastify';
@@ -12,6 +12,12 @@ import { sortLocationsNearestFirst } from '../config/warehouseConfig';
 const DEPARTMENTS = [
   { id: 'PK', label: 'PK', desc: 'Packing Department', color: '#6366f1', icon: '📦' },
   { id: 'RM', label: 'RM', desc: 'Raw Material Department', color: '#f97316', icon: '🏭' }
+];
+
+const STOCK_TYPE_TABS = [
+  { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
+  { id: 'CONTAINER_EXTRA', label: 'Extra', icon: <FiBox /> },
+  { id: 'IMPORT', label: 'Import', icon: <FiAnchor /> }
 ];
 
 const STATUS_CONFIG = {
@@ -43,6 +49,7 @@ function Withdraw() {
   const [dateFilter, setDateFilter] = useState('');
   const [expandedRequest, setExpandedRequest] = useState(null);
   const [requestDetails, setRequestDetails] = useState(null);
+  const [stockTypeTab, setStockTypeTab] = useState(null);
 
   useEffect(() => {
     if (department) {
@@ -50,12 +57,13 @@ function Withdraw() {
       fetchMyRequests();
     }
     // eslint-disable-next-line
-  }, [department, statusFilter, dateFilter]);
+  }, [department, statusFilter, dateFilter, stockTypeTab]);
 
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const res = await getInventory();
+      const params = stockTypeTab ? { stock_type: stockTypeTab } : {};
+      const res = await getInventory(params);
       setInventory(res.data);
     } catch (err) {
       toast.error('Failed to load stock');
@@ -107,17 +115,24 @@ function Withdraw() {
 
   // Group inventory by product (fish_name + size + bulk_weight + type + glazing)
   const groupedInventory = useMemo(() => {
-    // Filter first
+    // Filter first (search against combined label: fish/size/type/glazing + sticker + other fields)
     let filtered = inventory;
     if (search.trim()) {
       const q = search.toLowerCase();
-      filtered = inventory.filter(item =>
-        item.fish_name.toLowerCase().includes(q) ||
-        item.size.toLowerCase().includes(q) ||
-        item.line_place.toLowerCase().includes(q) ||
-        (item.lot_no && item.lot_no.toLowerCase().includes(q)) ||
-        (item.order_code && item.order_code.toLowerCase().includes(q))
-      );
+      filtered = inventory.filter(item => {
+        const typeOrGlazing = [item.type, item.glazing].filter(Boolean).join(' ');
+        const baseLabel = typeOrGlazing
+          ? `${item.fish_name}/${item.size}/${typeOrGlazing}`
+          : `${item.fish_name}/${item.size}`;
+        const stickerText = item.sticker ? ` (${item.sticker})` : '';
+        const label = (baseLabel + stickerText).toLowerCase();
+        return (
+          label.includes(q) ||
+          (item.line_place && item.line_place.toLowerCase().includes(q)) ||
+          (item.lot_no && item.lot_no.toLowerCase().includes(q)) ||
+          (item.order_code && item.order_code.toLowerCase().includes(q))
+        );
+      });
     }
     // Group by product identity (include stock_type and order_code so BULK vs EXTRA / different orders are separate)
     const groups = {};
@@ -135,6 +150,7 @@ function Withdraw() {
           glazing: item.glazing || '',
           stock_type: st,
           order_code: oc,
+          sticker_sample: item.sticker || '',
           total_mc: 0,
           total_kg: 0,
           subItems: []
@@ -143,6 +159,9 @@ function Withdraw() {
       const mc = Number(item.hand_on_balance_mc) || 0;
       groups[key].total_mc += mc;
       groups[key].total_kg += mc * Number(item.bulk_weight_kg);
+      if (!groups[key].sticker_sample && item.sticker) {
+        groups[key].sticker_sample = item.sticker;
+      }
       groups[key].subItems.push(item);
     });
     // Sort sub-items by nearest location first (04, 08 = nearest; 01 = far; then by line A–DD)
@@ -510,6 +529,18 @@ function Withdraw() {
                   />
                 </div>
               </div>
+              <div className="stock-type-tabs wd-stock-tabs">
+                {STOCK_TYPE_TABS.map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`stock-type-tab ${stockTypeTab === tab.id ? 'active' : ''}`}
+                    onClick={() => setStockTypeTab(prev => prev === tab.id ? null : tab.id)}
+                  >
+                    {tab.icon} {tab.label}
+                  </button>
+                ))}
+              </div>
 
               {loading ? (
                 <div className="loading"><div className="spinner"></div></div>
@@ -520,9 +551,12 @@ function Withdraw() {
                   {groupedInventory.map((group) => {
                     const inCart = cart.some(c => c.groupKey === group.key);
                     const typeOrGlazing = [group.type, group.glazing].filter(Boolean).join(' ');
-                    const stockLabel = typeOrGlazing
-                      ? `${group.fish_name}/${group.size}/${typeOrGlazing} = ${group.total_mc} MC.`
-                      : `${group.fish_name}/${group.size} = ${group.total_mc} MC.`;
+                    const baseLabel = typeOrGlazing
+                      ? `${group.fish_name}/${group.size}/${typeOrGlazing}`
+                      : `${group.fish_name}/${group.size}`;
+                    const stickerText = group.sticker_sample ? ` (${group.sticker_sample})` : '';
+                    const totalKg = Number(group.total_kg) || (group.total_mc * Number(group.bulk_weight_kg));
+                    const stockLabel = `${baseLabel}${stickerText} = ${group.total_mc} MC. [${totalKg.toLocaleString(undefined)} KG]`;
                     const st = group.stock_type || 'BULK';
                     const remark = st === 'CONTAINER_EXTRA'
                       ? (group.order_code ? `[EXTRA] Order: ${group.order_code}` : '[EXTRA]')
