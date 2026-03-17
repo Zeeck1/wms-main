@@ -162,6 +162,7 @@ function StockTable() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [columnFilters, setColumnFilters] = useState({});
+  const [rowLimit, setRowLimit] = useState(50);
 
   const isCE = activeTab === 'CONTAINER_EXTRA';
   const isImport = activeTab === 'IMPORT';
@@ -252,9 +253,14 @@ function StockTable() {
 
   const handleClearAllFilters = () => { setColumnFilters({}); };
 
-  const totalMC = filteredInventory.reduce((sum, r) => sum + Number(r.hand_on_balance_mc), 0);
-  const totalKG = filteredInventory.reduce((sum, r) => sum + Number(r.hand_on_balance_kg), 0);
-  const totalStacks = new Set(filteredInventory.map(r => `${r.line_place}-${r.stack_no}`)).size;
+  const displayRows = useMemo(() => {
+    if (!rowLimit || rowLimit <= 0) return filteredInventory;
+    return filteredInventory.slice(0, rowLimit);
+  }, [filteredInventory, rowLimit]);
+
+  const totalMC = displayRows.reduce((sum, r) => sum + Number(r.hand_on_balance_mc), 0);
+  const totalKG = displayRows.reduce((sum, r) => sum + Number(r.hand_on_balance_kg), 0);
+  const totalStacks = new Set(displayRows.map(r => `${r.line_place}-${r.stack_no}`)).size;
 
   const exportExcel = () => {
     let data;
@@ -350,6 +356,15 @@ function StockTable() {
               onChange={e => setSearchQuery(e.target.value)}
             />
           </div>
+          <div className="st-row-limit-btns">
+            <span className="st-row-limit-label">Show rows:</span>
+            <button className={`st-row-limit-btn ${rowLimit === 50 ? 'active' : ''}`} onClick={() => setRowLimit(50)}>50</button>
+            <button className={`st-row-limit-btn ${rowLimit === 100 ? 'active' : ''}`} onClick={() => setRowLimit(100)}>100</button>
+            <button className={`st-row-limit-btn ${rowLimit === 0 ? 'active' : ''}`} onClick={() => setRowLimit(0)}>All</button>
+            {rowLimit > 0 && filteredInventory.length > rowLimit && (
+              <span className="st-row-limit-hint">({displayRows.length} of {filteredInventory.length})</span>
+            )}
+          </div>
         </div>
 
         {activeFilterCount > 0 && (
@@ -390,7 +405,7 @@ function StockTable() {
                   </td></tr>
                 ) : filteredInventory.length === 0 ? (
                   <tr><td colSpan="10" style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
-                ) : filteredInventory.map((r, i) => (
+                ) : displayRows.map((r, i) => (
                   <tr key={i}>
                     <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
                     <td><strong>{r.order_code || '-'}</strong></td>
@@ -405,7 +420,7 @@ function StockTable() {
                   </tr>
                 ))}
               </tbody>
-              {filteredInventory.length > 0 && (
+              {displayRows.length > 0 && (
                 <tfoot>
                   <tr>
                     <td colSpan="5" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
@@ -445,7 +460,7 @@ function StockTable() {
                   </td></tr>
                 ) : filteredInventory.length === 0 ? (
                   <tr><td colSpan="15" style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
-                ) : filteredInventory.map((r, i) => (
+                ) : displayRows.map((r, i) => (
                   <tr key={i}>
                     <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
                     <td><strong>{r.fish_name}</strong></td>
@@ -465,12 +480,12 @@ function StockTable() {
                   </tr>
                 ))}
               </tbody>
-              {filteredInventory.length > 0 && (
+              {displayRows.length > 0 && (
                 <tfoot>
                   <tr>
                     <td colSpan="11" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
-                    <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.old_balance_mc), 0)}</td>
-                    <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.new_income_mc), 0)}</td>
+                    <td className="num-cell">{displayRows.reduce((s, r) => s + Number(r.old_balance_mc), 0)}</td>
+                    <td className="num-cell">{displayRows.reduce((s, r) => s + Number(r.new_income_mc), 0)}</td>
                     <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>
                     <td className="num-cell">{totalKG.toFixed(2)}</td>
                   </tr>

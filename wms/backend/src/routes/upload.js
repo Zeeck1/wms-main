@@ -95,15 +95,17 @@ router.post('/', upload.single('file'), async (req, res) => {
         // Map Excel columns to our fields (flexible column name matching)
         const fishName = (row['Fish Name'] || row['fish_name'] || row['Fish'] || '').toString().trim();
         const size = (row['Size'] || row['size'] || '').toString().trim();
-        const bulkWeight = parseFloat(row['Bulk Weight (KG)'] || row['bulk_weight_kg'] || row['Bulk Weight'] || 0);
+        const bulkWeightRaw = (row['Bulk Weight (KG)'] || row['Bulk weight'] || row['bulk_weight_kg'] || row['Bulk Weight'] || '').toString().trim();
+        const bulkWeight = parseFloat(bulkWeightRaw) || 0;
         const type = (row['Type'] || row['type'] || '').toString().trim();
         const glazing = (row['Glazing'] || row['glazing'] || '').toString().trim();
-        const csInDate = row['CS In Date'] || row['cs_in_date'] || row['Date'] || '';
+        const csInDate = row['CS-INDATE'] || row['CS In Date'] || row['CS-IN DATE'] || row['CSINDATE'] || row['cs_in_date'] || row['Date'] || '';
         const sticker = (row['Sticker'] || row['sticker'] || '').toString().trim();
-        const linePlace = (row['Lines / Place'] || row['line_place'] || row['Location'] || row['Lines/Place'] || '').toString().trim();
+        const linePlace = (row['Lines / Place'] || row['Lines/Place'] || row['line_place'] || row['Location'] || '').toString().trim();
         const stackNo = parseInt(row['Stack No'] || row['stack_no'] || 1) || 1;
         const stackTotal = parseInt(row['Stack Total'] || row['stack_total'] || 1) || 1;
-        const handOnBalance = parseInt(row['Hand On Balance'] || row['hand_on_balance'] || row['Balance'] || row['Qty'] || 0) || 0;
+        const hobRaw = (row['Hand - on Balance'] || row['Hand On Balance'] || row['Hand-on Balance'] || row['hand_on_balance'] || row['Balance'] || row['Qty'] || '0').toString().trim();
+        const handOnBalance = parseInt(hobRaw) || 0;
 
         if (!fishName || !size) {
           skipped++;
@@ -122,13 +124,22 @@ router.post('/', upload.single('file'), async (req, res) => {
         if (location.isNew) locationsCreated++;
         else locationsReused++;
 
-        // 3. Create lot
-        const lotNo = `IMP-${Date.now()}-${i}`;
+        // 3. Create lot (LOT prefix: IMP-BULK for bulk Excel import)
+        const lotNo = `IMP-BULK-${Date.now()}-${i}`;
         let parsedDate = null;
         if (csInDate) {
-          const d = new Date(csInDate);
-          if (!isNaN(d.getTime())) {
-            parsedDate = d.toISOString().split('T')[0];
+          if (csInDate instanceof Date) {
+            parsedDate = csInDate.toISOString().split('T')[0];
+          } else {
+            const ds = csInDate.toString().trim();
+            const ddmm = ds.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            if (ddmm) {
+              const [, dd, mm, yyyy] = ddmm;
+              parsedDate = `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+            } else {
+              const d = new Date(ds);
+              if (!isNaN(d.getTime())) parsedDate = d.toISOString().split('T')[0];
+            }
           }
         }
         if (!parsedDate) parsedDate = new Date().toISOString().split('T')[0];

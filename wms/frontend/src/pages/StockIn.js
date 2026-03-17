@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FiArrowDownCircle, FiPlus } from 'react-icons/fi';
+import { FiArrowDownCircle, FiPlus, FiUpload, FiFile, FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { getProducts, getLocations, getLots, createLot, stockIn } from '../services/api';
+import { getProducts, getLocations, getLots, createLot, stockIn, uploadExcel } from '../services/api';
 
 function getLotLabel(lot) {
   if (!lot) return '';
@@ -31,6 +31,13 @@ function StockIn() {
     reference_no: '',
     notes: ''
   });
+
+  const [showUpload, setShowUpload] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const uploadFileRef = useRef(null);
 
   const [lotFilters, setLotFilters] = useState({
     fish_name: '',
@@ -175,6 +182,22 @@ function StockIn() {
     });
   };
 
+  const handleUploadFile = async () => {
+    if (!uploadFile) { toast.warning('Please select a file first'); return; }
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const res = await uploadExcel(uploadFile);
+      setUploadResult(res.data);
+      toast.success(`Import completed: ${res.data.imported} rows imported`);
+      const lotRes = await getLots();
+      setLots(lotRes.data);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Upload failed');
+      setUploadResult({ error: err.response?.data?.error || 'Upload failed' });
+    } finally { setUploading(false); }
+  };
+
   if (loading) return <div className="loading"><div className="spinner"></div>Loading...</div>;
 
   return (
@@ -186,11 +209,66 @@ function StockIn() {
         <div className="card" style={{ maxWidth: 1200, width: '100%' }}>
           <div className="card-header">
             <h3>Receive Stock Into Location</h3>
-            <button className="btn btn-outline btn-sm" onClick={() => setShowNewLot(!showNewLot)}>
-              <FiPlus /> New Lot
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-outline btn-sm" onClick={() => { setShowUpload(!showUpload); setShowNewLot(false); }}>
+                <FiUpload /> Excel Upload
+              </button>
+              <button className="btn btn-outline btn-sm" onClick={() => { setShowNewLot(!showNewLot); setShowUpload(false); }}>
+                <FiPlus /> New Lot
+              </button>
+            </div>
           </div>
           <div className="card-body">
+            {showUpload && (
+              <div style={{ background: '#eff6ff', borderRadius: 8, padding: 16, marginBottom: 20, border: '1px solid #bfdbfe' }}>
+                <h4 style={{ marginBottom: 8, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: 6 }}><FiUpload /> Upload Bulk Stock Excel</h4>
+                <div className="alert alert-info" style={{ margin: '0 0 12px', fontSize: '0.82rem' }}>
+                  Excel columns: <strong>Fish Name, Size, Bulk Weight, Type, Glazing, Sticker, CS-INDATE, Lines / Place, Stack No, Stack Total, Hand - on Balance</strong>
+                </div>
+                <div
+                  className={`upload-area ${dragOver ? 'drag-over' : ''}`}
+                  onClick={() => uploadFileRef.current.click()}
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) setUploadFile(f); }}
+                  style={{ padding: '20px 16px', minHeight: 'auto' }}
+                >
+                  <input type="file" ref={uploadFileRef} onChange={e => { if (e.target.files[0]) setUploadFile(e.target.files[0]); }} accept=".xlsx,.xls,.csv" style={{ display: 'none' }} />
+                  {uploadFile ? (
+                    <><FiFile style={{ fontSize: '1.8rem', color: 'var(--success)' }} /><h4 style={{ margin: '4px 0 0', fontSize: '0.88rem' }}>{uploadFile.name}</h4><p style={{ fontSize: '0.78rem' }}>{(uploadFile.size / 1024).toFixed(1)} KB</p></>
+                  ) : (
+                    <><FiUpload style={{ fontSize: '1.8rem' }} /><h4 style={{ margin: '4px 0 0', fontSize: '0.88rem' }}>Click or drag Excel file here</h4><p style={{ fontSize: '0.78rem' }}>.xlsx, .xls, .csv (max 10MB)</p></>
+                  )}
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', gap: 10 }}>
+                  <button className="btn btn-primary btn-sm" onClick={handleUploadFile} disabled={!uploadFile || uploading}>
+                    <FiUpload /> {uploading ? 'Uploading...' : 'Upload & Import'}
+                  </button>
+                  {uploadFile && <button className="btn btn-outline btn-sm" onClick={() => { setUploadFile(null); setUploadResult(null); }}>Clear</button>}
+                </div>
+                {uploadResult && !uploadResult.error && (
+                  <div className="alert alert-success" style={{ marginTop: 12 }}>
+                    <FiCheckCircle />
+                    <div>
+                      <strong>Import Successful!</strong><br />
+                      Total: {uploadResult.total_rows} | Imported: {uploadResult.imported} | Skipped: {uploadResult.skipped}
+                      {(uploadResult.products_created > 0 || uploadResult.products_reused > 0) && <><br />Products — New: {uploadResult.products_created}, Reused: {uploadResult.products_reused}</>}
+                      {(uploadResult.locations_created > 0 || uploadResult.locations_reused > 0) && <><br />Locations — New: {uploadResult.locations_created}, Reused: {uploadResult.locations_reused}</>}
+                    </div>
+                  </div>
+                )}
+                {uploadResult && uploadResult.error && (
+                  <div className="alert alert-error" style={{ marginTop: 12 }}><FiAlertCircle /><div><strong>Error:</strong> {uploadResult.error}</div></div>
+                )}
+                {uploadResult && uploadResult.errors && uploadResult.errors.length > 0 && (
+                  <div className="alert alert-warning" style={{ marginTop: 8 }}>
+                    <FiAlertCircle />
+                    <div><strong>Row issues:</strong><ul style={{ margin: '4px 0 0 16px', fontSize: '0.8rem' }}>{uploadResult.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {showNewLot && (
               <div style={{ background: '#f0fdf4', borderRadius: 8, padding: 16, marginBottom: 20, border: '1px solid #bbf7d0' }}>
                 <h4 style={{ marginBottom: 12, fontSize: '0.9rem' }}>Create New Lot</h4>
