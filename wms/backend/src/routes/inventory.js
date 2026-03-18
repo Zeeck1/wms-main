@@ -5,7 +5,7 @@ const pool = require('../config/db');
 // GET inventory (stock table - mirrors Excel view, optional ?stock_type= filter)
 router.get('/', async (req, res) => {
   try {
-    const { fish_name, location, lot_no, stock_type } = req.query;
+    const { fish_name, location, lot_no, stock_type, limit, offset } = req.query;
     let sql = 'SELECT * FROM inventory_view WHERE 1=1';
     const params = [];
 
@@ -15,6 +15,11 @@ router.get('/', async (req, res) => {
     if (lot_no) { sql += ' AND lot_no LIKE ?'; params.push(`%${lot_no}%`); }
 
     sql += ' ORDER BY line_place, stack_no, fish_name';
+
+    const limitNum = parseInt(limit, 10);
+    const offsetNum = parseInt(offset, 10);
+    if (limitNum > 0) sql += ' LIMIT ?'; if (limitNum > 0) params.push(limitNum);
+    if (offsetNum > 0) sql += ' OFFSET ?'; if (offsetNum > 0) params.push(offsetNum);
 
     const [rows] = await pool.query(sql, params);
     res.json(rows);

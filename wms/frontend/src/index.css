@@ -1148,6 +1148,16 @@ body {
   border-radius: 6px;
   border: 1px dashed var(--gray-200);
 }
+.ms-hint-limit { color: var(--orange-500, #f59e0b); }
+.ms-window-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.ms-window-info, .ms-window-page { font-size: 0.85rem; color: var(--gray-600); }
+.ms-window-nav .btn { min-width: 60px; }
 .ms-wrap {
   overflow: auto;
   max-height: 64vh;

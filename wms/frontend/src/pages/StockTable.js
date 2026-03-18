@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { FiDownload, FiSearch, FiPackage, FiBox, FiTrash2, FiAnchor, FiChevronDown, FiCheck, FiX } from 'react-icons/fi';
+import { FiDownload, FiSearch, FiPackage, FiBox, FiTrash2, FiAnchor, FiChevronDown, FiCheck, FiX, FiCopy } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { getInventory, deleteAllStockData } from '../services/api';
 import * as XLSX from 'xlsx';
@@ -26,6 +26,19 @@ const BULK_COLUMNS = [
   { key: 'new_income_mc', label: 'New Income' },
   { key: 'hand_on_balance_mc', label: 'Hand On Balance' },
   { key: 'hand_on_balance_kg', label: 'KG' }
+];
+
+const CE_COLUMNS = [
+  { key: 'order_code', label: 'Order' },
+  { key: 'fish_name', label: 'Fish Name' },
+  { key: 'size', label: 'Size' },
+  { key: 'bulk_weight_kg', label: 'KG' },
+  { key: 'production_date', label: 'Production Date' },
+  { key: 'expiration_date', label: 'Expiration Date' },
+  { key: 'hand_on_balance_kg', label: 'Total KG' },
+  { key: 'hand_on_balance_mc', label: 'Balance MC' },
+  { key: 'line_place', label: 'Line' },
+  { key: 'remark', label: 'Remark' }
 ];
 
 const CE_IMPORT_COLUMNS = [
@@ -167,7 +180,7 @@ function StockTable() {
   const isCE = activeTab === 'CONTAINER_EXTRA';
   const isImport = activeTab === 'IMPORT';
   const isNonBulk = isCE || isImport;
-  const columns = isNonBulk ? CE_IMPORT_COLUMNS : BULK_COLUMNS;
+  const columns = isCE ? CE_COLUMNS : (isImport ? CE_IMPORT_COLUMNS : BULK_COLUMNS);
 
   const fetchInventory = useCallback(async () => {
     try {
@@ -258,23 +271,36 @@ function StockTable() {
     return filteredInventory.slice(0, rowLimit);
   }, [filteredInventory, rowLimit]);
 
-  const totalMC = displayRows.reduce((sum, r) => sum + Number(r.hand_on_balance_mc), 0);
-  const totalKG = displayRows.reduce((sum, r) => sum + Number(r.hand_on_balance_kg), 0);
-  const totalStacks = new Set(displayRows.map(r => `${r.line_place}-${r.stack_no}`)).size;
+  // Totals from full filtered set (user's search + column filters), not the displayed slice
+  const totalMC = filteredInventory.reduce((sum, r) => sum + Number(r.hand_on_balance_mc), 0);
+  const totalKG = filteredInventory.reduce((sum, r) => sum + Number(r.hand_on_balance_kg), 0);
+  const totalStacks = new Set(filteredInventory.map(r => `${r.line_place}-${r.stack_no}`)).size;
 
   const exportExcel = () => {
     let data;
     const source = filteredInventory;
     if (isNonBulk) {
       const orderLabel = isImport ? 'Invoice No' : 'Order';
-      data = source.map((r, i) => ({
-        '#': i + 1, [orderLabel]: r.order_code || '', 'Fish Name': r.fish_name,
-        'Size': r.size, 'KG': Number(r.bulk_weight_kg), 'Arrival Date': r.cs_in_date || '',
-        'Line': r.line_place, 'Balance MC': Number(r.hand_on_balance_mc),
-        'Total KG': Number(r.hand_on_balance_kg), 'Remark': r.remark || ''
-      }));
-      data.push({ '#': '', [orderLabel]: '', 'Fish Name': 'TOTAL', 'Size': '', 'KG': '',
-        'Arrival Date': '', 'Line': '', 'Balance MC': totalMC, 'Total KG': totalKG, 'Remark': '' });
+      if (isCE) {
+        data = source.map((r, i) => ({
+          '#': i + 1, [orderLabel]: r.order_code || '', 'Fish Name': r.fish_name,
+          'Size': r.size, 'KG': Number(r.bulk_weight_kg),
+          'Production Date': r.production_date || '', 'Expiration Date': r.expiration_date || '',
+          'Line': r.line_place, 'Balance MC': Number(r.hand_on_balance_mc),
+          'Total KG': Number(r.hand_on_balance_kg), 'Remark': r.remark || ''
+        }));
+        data.push({ '#': '', [orderLabel]: '', 'Fish Name': 'TOTAL', 'Size': '', 'KG': '',
+          'Production Date': '', 'Expiration Date': '', 'Line': '', 'Balance MC': totalMC, 'Total KG': totalKG, 'Remark': '' });
+      } else {
+        data = source.map((r, i) => ({
+          '#': i + 1, [orderLabel]: r.order_code || '', 'Fish Name': r.fish_name,
+          'Size': r.size, 'KG': Number(r.bulk_weight_kg), 'Arrival Date': r.cs_in_date || '',
+          'Line': r.line_place, 'Balance MC': Number(r.hand_on_balance_mc),
+          'Total KG': Number(r.hand_on_balance_kg), 'Remark': r.remark || ''
+        }));
+        data.push({ '#': '', [orderLabel]: '', 'Fish Name': 'TOTAL', 'Size': '', 'KG': '',
+          'Arrival Date': '', 'Line': '', 'Balance MC': totalMC, 'Total KG': totalKG, 'Remark': '' });
+      }
     } else {
       data = source.map((r, i) => ({
         '#': i + 1, 'Fish Name': r.fish_name, 'Size': r.size,
@@ -296,6 +322,59 @@ function StockTable() {
     const prefix = isCE ? 'Container_Extra' : isImport ? 'Import' : 'Bulk';
     XLSX.writeFile(wb, `WMS_${prefix}_Stock_${new Date().toISOString().split('T')[0]}.xlsx`);
     toast.success('Excel file downloaded');
+  };
+
+  const exportAsText = async () => {
+    if (filteredInventory.length === 0) {
+      toast.warn('No data to copy');
+      return;
+    }
+    let text;
+    if (!isNonBulk) {
+      const totalMC = filteredInventory.reduce((s, r) => s + Number(r.hand_on_balance_mc), 0);
+      const totalKG = filteredInventory.reduce((s, r) => s + Number(r.hand_on_balance_kg), 0);
+      const rows = filteredInventory.map(r => {
+        const mc = Number(r.hand_on_balance_mc) || 0;
+        const kg = Number(r.hand_on_balance_kg) || 0;
+        const type = (r.type || '').trim();
+        const glazing = (r.glazing || '').trim();
+        const parts = [
+          (r.fish_name || '').trim(),
+          (r.size || '').trim(),
+          `${Number(r.bulk_weight_kg) || 0} KG`,
+        ];
+        if (type) parts.push(type);
+        if (glazing) {
+          parts.push(`${glazing} = ${mc} MC [${kg} KG]`);
+        } else {
+          const suffix = `= ${mc} MC [${kg} KG]`;
+          if (type) parts[parts.length - 1] = `${parts[parts.length - 1]} ${suffix}`;
+          else parts.push(suffix);
+        }
+        return parts.join(' / ');
+      });
+      text = rows.join('\r\n') + '\r\n\r\nTOTAL MC\t' + totalMC + '\r\nTOTAL KG\t' + totalKG;
+    } else {
+      const getHeaderLabel = (col) => col.label != null ? col.label : (col.key === 'order_code' ? (isImport ? 'Invoice No' : 'Order') : col.key);
+      const headerLabels = ['#', ...columns.map(getHeaderLabel)];
+      const rows = filteredInventory.map((r, i) => {
+        const cells = [i + 1];
+        columns.forEach(col => {
+          const val = r[col.key];
+          const isKg = col.key === 'bulk_weight_kg' || col.key === 'hand_on_balance_kg';
+          if (isKg) cells.push(Number(val || 0));
+          else cells.push(val != null && val !== '' ? String(val) : '');
+        });
+        return cells.join('\t');
+      });
+      text = [headerLabels.join('\t'), ...rows].join('\r\n');
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Copied ${filteredInventory.length} rows as text`);
+    } catch {
+      toast.error('Failed to copy to clipboard');
+    }
   };
 
   if (loading) return <div className="loading"><div className="spinner"></div>Loading stock table...</div>;
@@ -356,6 +435,9 @@ function StockTable() {
               onChange={e => setSearchQuery(e.target.value)}
             />
           </div>
+          <button className="btn btn-outline btn-sm" onClick={exportAsText} disabled={filteredInventory.length === 0} title="Copy filtered table as text">
+            <FiCopy /> Export as Text
+          </button>
           <div className="st-row-limit-btns">
             <span className="st-row-limit-label">Show rows:</span>
             <button className={`st-row-limit-btn ${rowLimit === 50 ? 'active' : ''}`} onClick={() => setRowLimit(50)}>50</button>
@@ -387,47 +469,47 @@ function StockTable() {
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>#</th>
-                  {renderHeaderCell({ key: 'order_code' }, isImport ? 'Invoice No' : 'Order')}
-                  {renderHeaderCell({ key: 'fish_name' }, 'Fish Name')}
-                  {renderHeaderCell({ key: 'size' }, 'Size')}
-                  {renderHeaderCell({ key: 'bulk_weight_kg' }, 'KG')}
-                  {renderHeaderCell({ key: 'cs_in_date' }, 'Arrival Date')}
-                  {renderHeaderCell({ key: 'hand_on_balance_kg' }, 'Total KG')}
-                  {renderHeaderCell({ key: 'hand_on_balance_mc' }, 'Balance MC', { background: '#5c1a1a', color: '#f8d7da' })}
-                  {renderHeaderCell({ key: 'line_place' }, 'Line')}
-                  {renderHeaderCell({ key: 'remark' }, 'Remark')}
+                  {columns.map(col => renderHeaderCell(
+                    col,
+                    col.label != null ? col.label : (col.key === 'order_code' ? (isImport ? 'Invoice No' : 'Order') : col.key),
+                    col.key === 'hand_on_balance_mc' ? { background: '#5c1a1a', color: '#f8d7da' } : {}
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {inventory.length === 0 ? (
-                  <tr><td colSpan="10" style={{ textAlign: 'center', padding: 60, color: '#999' }}>
+                  <tr><td colSpan={columns.length + 1} style={{ textAlign: 'center', padding: 60, color: '#999' }}>
                     No {isImport ? 'Import' : 'Container Extra'} stock found. Upload data via Excel Upload.
                   </td></tr>
                 ) : filteredInventory.length === 0 ? (
-                  <tr><td colSpan="10" style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
+                  <tr><td colSpan={columns.length + 1} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
                 ) : displayRows.map((r, i) => (
                   <tr key={i}>
                     <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
-                    <td><strong>{r.order_code || '-'}</strong></td>
-                    <td><strong>{r.fish_name}</strong></td>
-                    <td>{r.size}</td>
-                    <td className="num-cell">{Number(r.bulk_weight_kg).toFixed(0)} KG</td>
-                    <td>{r.cs_in_date || '-'}</td>
-                    <td className="num-cell">{Number(r.hand_on_balance_kg).toFixed(0)} KG</td>
-                    <td className="num-cell" style={{ background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' }}>{r.hand_on_balance_mc}</td>
-                    <td><strong>{r.line_place}</strong></td>
-                    <td>{r.remark || '-'}</td>
+                    {columns.map(col => {
+                      const val = r[col.key];
+                      const isMC = col.key === 'hand_on_balance_mc';
+                      const isKg = col.key === 'bulk_weight_kg' || col.key === 'hand_on_balance_kg';
+                      const isOrder = col.key === 'order_code';
+                      const isLine = col.key === 'line_place';
+                      return (
+                        <td key={col.key} className={isKg || isMC ? 'num-cell' : ''} style={isMC ? { background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' } : {}}>
+                          {isOrder || isLine ? <strong>{val ?? '-'}</strong> : isKg ? `${Number(val || 0).toFixed(0)} KG` : (val != null && val !== '' ? String(val) : '-')}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
               {displayRows.length > 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan="5" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
+                    <td></td>
+                    <td colSpan={5} style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
                     <td></td>
                     <td className="num-cell">{totalKG.toFixed(0)} KG</td>
                     <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>
-                    <td colSpan="2"></td>
+                    <td colSpan={Math.max(0, columns.length - 8)}></td>
                   </tr>
                 </tfoot>
               )}
@@ -484,8 +566,8 @@ function StockTable() {
                 <tfoot>
                   <tr>
                     <td colSpan="11" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
-                    <td className="num-cell">{displayRows.reduce((s, r) => s + Number(r.old_balance_mc), 0)}</td>
-                    <td className="num-cell">{displayRows.reduce((s, r) => s + Number(r.new_income_mc), 0)}</td>
+                    <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.old_balance_mc), 0)}</td>
+                    <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.new_income_mc), 0)}</td>
                     <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>
                     <td className="num-cell">{totalKG.toFixed(2)}</td>
                   </tr>

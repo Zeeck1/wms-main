@@ -66,7 +66,8 @@ function StockChart() {
   // Pie data (top products by MC)
   const pieData = React.useMemo(() => {
     return byProduct.slice(0, 8).map((d, i) => ({
-      name: d.name.length > 20 ? d.name.slice(0, 18) + '…' : d.name,
+      name: d.name,
+      shortName: d.name.length > 26 ? d.name.slice(0, 24) + '…' : d.name,
       value: d.mc,
       color: CHART_COLORS[i % CHART_COLORS.length]
     }));
@@ -165,8 +166,8 @@ function StockChart() {
             {/* Pie: Distribution by Product */}
             <div className="chart-card chart-card-full">
               <h3 className="chart-title">Stock Distribution by Product (Top 8)</h3>
-              <div className="chart-inner" style={{ maxWidth: 480, margin: '0 auto' }}>
-                <ResponsiveContainer width="100%" height={320}>
+              <div className="chart-inner" style={{ maxWidth: 760, margin: '0 auto' }}>
+                <ResponsiveContainer width="100%" height={360}>
                   <PieChart>
                     <Pie
                       data={pieData}
@@ -177,13 +178,25 @@ function StockChart() {
                       paddingAngle={2}
                       dataKey="value"
                       nameKey="name"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      label={false}
+                      labelLine={false}
                     >
                       {pieData.map((entry, index) => (
                         <Cell key={index} fill={entry.color} />
                       ))}
                     </Pie>
                     <Tooltip formatter={(value) => [value, 'MC']} />
+                    <Legend
+                      layout="vertical"
+                      verticalAlign="middle"
+                      align="right"
+                      formatter={(value, entry) => {
+                        const payload = entry && entry.payload ? entry.payload : null;
+                        const nm = payload?.shortName || value;
+                        const mc = payload?.value;
+                        return `${nm} (${mc} MC)`;
+                      }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

@@ -48,6 +48,8 @@ const LINE_OPTIONS = [
 ];
 
 const rk = (r) => `${r.lot_id}-${r.location_id}`;
+const MANUAL_FETCH_LIMIT = 2000;
+const ROW_WINDOW_SIZE = 150;
 const toDateOnly = (d) => {
   if (d == null || d === '') return '';
   if (typeof d === 'string') return d.split('T')[0];
@@ -73,11 +75,15 @@ function Manual() {
   const [undoStack, setUndoStack] = useState([]);
   const [copiedRow, setCopiedRow] = useState(null);
   const [dragTarget, setDragTarget] = useState(null);
+  const [pendingEditsMap, setPendingEditsMap] = useState({});
+  const [windowStart, setWindowStart] = useState(0);
 
   const rowsRef = useRef(rows);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
   const tableRef = useRef(null);
   const dragRef = useRef(null);
+  const windowStartRef = useRef(0);
+  useEffect(() => { windowStartRef.current = windowStart; }, [windowStart]);
 
   const isNonBulk = activeTab !== 'BULK';
   const isImport = activeTab === 'IMPORT';
@@ -85,28 +91,8 @@ function Manual() {
   const columnsRef = useRef(columns);
   useEffect(() => { columnsRef.current = columns; }, [columns]);
 
-  // ─── Dirty tracking ──────────────────────────────────────────────────
-  const pendingEdits = useMemo(() => {
-    const edits = {};
-    rows.forEach((row, i) => {
-      const orig = originalRows.find(o => rk(o) === rk(row));
-      if (!orig) return;
-      columns.forEach(col => {
-        if (!col.editable) return;
-        const curVal = col.type === 'date' ? toDateOnly(row[col.key]) : String(row[col.key] ?? '');
-        const origVal = col.type === 'date' ? toDateOnly(orig[col.key]) : String(orig[col.key] ?? '');
-        if (curVal !== origVal) {
-          edits[`${rk(row)}-${col.field}`] = {
-            lot_id: row.lot_id, location_id: row.location_id,
-            field: col.field, value: curVal
-          };
-        }
-      });
-    });
-    return edits;
-  }, [rows, originalRows, columns]);
-
-  const isDirty = Object.keys(pendingEdits).length > 0;
+  const pendingEdits = pendingEditsMap;
+  const isDirty = Object.keys(pendingEditsMap).length > 0;
 
   // ─── Navigation Blocker ──────────────────────────────────────────────
   const dirtyRef = useRef(false);
@@ -138,8 +124,10 @@ function Manual() {
   // ─── Data Loading ────────────────────────────────────────────────────
   const loadData = useCallback(async (params = {}) => {
     setLoading(true);
+    setPendingEditsMap({});
+    setWindowStart(0);
     try {
-      const res = await getInventory({ stock_type: activeTab, ...params });
+      const res = await getInventory({ stock_type: activeTab, limit: MANUAL_FETCH_LIMIT, ...params });
       setRows(res.data);
       setOriginalRows(res.data.map(r => ({ ...r })));
     } catch { toast.error('Failed to load data'); }
@@ -151,14 +139,16 @@ function Manual() {
     setUndoStack([]);
     setCopiedRow(null);
     setSelectedCell(null);
+    setPendingEditsMap({});
     loadData();
   }, [activeTab, loadData]);
 
   const handleSearch = (e) => {
     e.preventDefault();
-    const p = {};
+    const p = { limit: MANUAL_FETCH_LIMIT };
     if (filters.fish_name.trim()) p.fish_name = filters.fish_name.trim();
     if (filters.line_detail.trim()) p.location = filters.line_detail.trim();
+    setWindowStart(0);
     loadData(p);
   };
 
@@ -178,14 +168,35 @@ function Manual() {
     return list;
   }, [rows, filters.line, filters.stack_no]);
 
+  const useWindow = filteredRows.length > ROW_WINDOW_SIZE;
+  const displayRows = useMemo(() => {
+    if (!useWindow) return filteredRows;
+    return filteredRows.slice(windowStart, windowStart + ROW_WINDOW_SIZE);
+  }, [filteredRows, useWindow, windowStart]);
+  const totalWindowPages = useWindow ? Math.ceil(filteredRows.length / ROW_WINDOW_SIZE) : 1;
+  const currentWindowPage = useWindow ? Math.floor(windowStart / ROW_WINDOW_SIZE) + 1 : 1;
+
+  useEffect(() => {
+    if (windowStart >= filteredRows.length && filteredRows.length > 0) setWindowStart(0);
+  }, [filteredRows.length, windowStart]);
+
   // ─── Cell Editing (local only — saved via Save button) ───────────────
   const handleCellChange = (rowIdx, col, newVal) => {
-    const rowKey = rk(rows[rowIdx]);
+    const row = rows[rowIdx];
+    if (!row) return;
+    const rowKey = rk(row);
+    const orig = originalRows.find(o => rk(o) === rowKey);
+    const origVal = orig ? (col.type === 'date' ? toDateOnly(orig[col.key]) : String(orig[col.key] ?? '')) : '';
+    const normNew = col.type === 'date' ? toDateOnly(newVal) : String(newVal ?? '');
+    const editKey = `${rowKey}-${col.field}`;
     setRows(prev => prev.map((r, i) => i !== rowIdx ? r : { ...r, [col.key]: newVal }));
-    setUndoStack(prev => [...prev, {
-      type: 'edit', rowKey, colKey: col.key,
-      oldValue: rows[rowIdx][col.key], newValue: newVal,
-    }]);
+    setPendingEditsMap(prev => {
+      const next = { ...prev };
+      if (normNew === origVal) delete next[editKey];
+      else next[editKey] = { lot_id: row.lot_id, location_id: row.location_id, field: col.field, value: normNew };
+      return next;
+    });
+    setUndoStack(prev => [...prev, { type: 'edit', rowKey, colKey: col.key, oldValue: row[col.key], newValue: newVal }]);
   };
 
   // ─── Save All ────────────────────────────────────────────────────────
@@ -213,6 +224,7 @@ function Manual() {
     if (!isDirty) return;
     if (!window.confirm('Discard all unsaved changes?')) return;
     setRows(originalRows.map(r => ({ ...r })));
+    setPendingEditsMap({});
     setUndoStack([]);
     toast.info('Changes discarded');
   };
@@ -272,9 +284,21 @@ function Manual() {
       setRows(prev => prev.map(r =>
         rk(r) === action.rowKey ? { ...r, [action.colKey]: action.oldValue } : r
       ));
+      const col = columnsRef.current.find(c => c.key === action.colKey);
+      const origRow = originalRows.find(r => rk(r) === action.rowKey);
+      if (col?.field && origRow) {
+        const editKey = `${action.rowKey}-${col.field}`;
+        const origVal = col.type === 'date' ? toDateOnly(origRow[col.key]) : String(origRow[col.key] ?? '');
+        const reverted = col.type === 'date' ? toDateOnly(action.oldValue) : String(action.oldValue ?? '');
+        setPendingEditsMap(prev => {
+          const next = { ...prev };
+          if (reverted === origVal) delete next[editKey]; else next[editKey] = { lot_id: origRow.lot_id, location_id: origRow.location_id, field: col.field, value: reverted };
+          return next;
+        });
+      }
       toast.info('Undone');
     }
-  }, [undoStack]);
+  }, [undoStack, originalRows]);
 
   // ─── Drag-down Fill ──────────────────────────────────────────────────
   const filteredRef = useRef(filteredRows);
@@ -293,7 +317,7 @@ function Manual() {
       for (let i = 0; i < trs.length; i++) {
         const rect = trs[i].getBoundingClientRect();
         if (me.clientY >= rect.top && me.clientY <= rect.bottom) {
-          dragRef.current.targetRowIdx = i;
+          dragRef.current.targetRowIdx = windowStartRef.current + i;
           setDragTarget(i);
           return;
         }
@@ -315,6 +339,7 @@ function Manual() {
       const col = columnsRef.current.find(c => c.key === cKey);
       if (!col || !col.editable) return;
 
+      const editsToAdd = {};
       for (let i = startI; i <= endI; i++) {
         if (i === sIdx) continue;
         const r = fCurrent[i];
@@ -323,7 +348,9 @@ function Manual() {
         const oldVal = r[cKey];
         setRows(prev => prev.map(row => rk(row) === key ? { ...row, [cKey]: val } : row));
         setUndoStack(prev => [...prev, { type: 'edit', rowKey: key, colKey: cKey, oldValue: oldVal, newValue: val }]);
+        if (col?.field) editsToAdd[`${key}-${col.field}`] = { lot_id: r.lot_id, location_id: r.location_id, field: col.field, value: val };
       }
+      if (Object.keys(editsToAdd).length > 0) setPendingEditsMap(prev => ({ ...prev, ...editsToAdd }));
     };
 
     document.addEventListener('mousemove', onMove);
@@ -336,7 +363,7 @@ function Manual() {
       if (e.ctrlKey && e.key === 'z') { e.preventDefault(); handleUndo(); }
       if (e.ctrlKey && e.key === 's') { e.preventDefault(); handleSaveAll(); }
       if (e.ctrlKey && e.key === 'c' && selectedCell != null) {
-        const row = filteredRows[selectedCell];
+        const row = filteredRows.find(r => rk(r) === selectedCell);
         if (row) { setCopiedRow({ ...row }); toast.info('Row copied'); }
       }
       if (e.ctrlKey && e.key === 'v' && copiedRow) {
@@ -462,7 +489,21 @@ function Manual() {
 
         <div className="ms-hint">
           Click any cell to edit · <b>Ctrl+S</b> Save · <b>Ctrl+Z</b> Undo · <b>Ctrl+C</b> Copy row · <b>Ctrl+V</b> Paste · Drag blue handle to fill down
+          {rows.length >= MANUAL_FETCH_LIMIT && (
+            <span className="ms-hint-limit"> · Showing up to {MANUAL_FETCH_LIMIT} rows (use Search to narrow)</span>
+          )}
         </div>
+
+        {useWindow && (
+          <div className="ms-window-nav">
+            <span className="ms-window-info">Rows {windowStart + 1}–{Math.min(windowStart + ROW_WINDOW_SIZE, filteredRows.length)} of {filteredRows.length}</span>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setWindowStart(0)} disabled={windowStart === 0}>First</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setWindowStart(w => Math.max(0, w - ROW_WINDOW_SIZE))} disabled={windowStart === 0}>Prev</button>
+            <span className="ms-window-page">Page {currentWindowPage} of {totalWindowPages}</span>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setWindowStart(w => Math.min(filteredRows.length - ROW_WINDOW_SIZE, w + ROW_WINDOW_SIZE))} disabled={windowStart + ROW_WINDOW_SIZE >= filteredRows.length}>Next</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setWindowStart(Math.max(0, filteredRows.length - ROW_WINDOW_SIZE))} disabled={windowStart + ROW_WINDOW_SIZE >= filteredRows.length}>Last</button>
+          </div>
+        )}
 
         <div className="ms-wrap" ref={tableRef}>
           <table className="ms-table">
@@ -479,21 +520,24 @@ function Manual() {
               </tr>
             </thead>
             <tbody>
-              {filteredRows.length === 0 ? (
+              {displayRows.length === 0 ? (
                 <tr><td colSpan={columns.length + 2} style={{ textAlign: 'center', padding: 60, color: '#999' }}>
                   No data. Click "Add Row" or upload via Excel Upload.
                 </td></tr>
-              ) : filteredRows.map((row, rowIdx) => {
+              ) : displayRows.map((row, rowIdx) => {
+                const filteredIdx = useWindow ? windowStart + rowIdx : rowIdx;
                 const isDragHL = dragTarget != null && dragRef.current &&
-                  rowIdx >= Math.min(dragRef.current.sourceRowIdx, dragTarget) &&
-                  rowIdx <= Math.max(dragRef.current.sourceRowIdx, dragTarget);
+                  filteredIdx >= Math.min(dragRef.current.sourceRowIdx, dragRef.current.targetRowIdx) &&
+                  filteredIdx <= Math.max(dragRef.current.sourceRowIdx, dragRef.current.targetRowIdx);
                 const orig = originalRows.find(o => rk(o) === rk(row));
+                const fullIdx = rows.findIndex(r => rk(r) === rk(row));
+                const rowNum = useWindow ? windowStart + rowIdx + 1 : rowIdx + 1;
                 return (
                   <tr key={rk(row)}
-                    className={`${selectedCell === rowIdx ? 'ms-row-sel' : ''} ${isDragHL ? 'ms-drag-hl' : ''}`}>
-                    <td className="ms-num" onClick={() => setSelectedCell(rowIdx)} title="Select row">{rowIdx + 1}</td>
+                    className={`${selectedCell === rk(row) ? 'ms-row-sel' : ''} ${isDragHL ? 'ms-drag-hl' : ''}`}>
+                    <td className="ms-num" onClick={() => setSelectedCell(rk(row))} title="Select row">{rowNum}</td>
                     {columns.map(col => {
-                      const isActive = selectedCell === rowIdx;
+                      const isActive = selectedCell === rk(row);
                       if (!col.editable) {
                         const display = col.formula ? getCellDisplay(row, col) : (row[col.key] ?? '-');
                         return (
@@ -511,20 +555,20 @@ function Manual() {
                             className={`ms-input ${col.type === 'number' ? 'ms-input-num' : ''}`}
                             type={col.type === 'date' ? 'date' : col.type === 'number' ? 'number' : 'text'}
                             value={val}
-                            onChange={e => handleCellChange(rows.indexOf(row), col, e.target.value)}
+                            onChange={e => handleCellChange(fullIdx, col, e.target.value)}
                             onKeyDown={e => {
                               if (e.key === 'Tab' || e.key === 'Enter') e.currentTarget.blur();
                             }}
                           />
                           {isActive && (
-                            <div className="ms-drag-handle" onMouseDown={e => startDrag(e, rowIdx, col.key)} title="Drag to fill down" />
+                            <div className="ms-drag-handle" onMouseDown={e => startDrag(e, filteredIdx, col.key)} title="Drag to fill down" />
                           )}
                         </td>
                       );
                     })}
                     <td className="ms-act">
-                      <button className="ms-btn-copy" onClick={() => handleDuplicateRow(rowIdx)} title="Duplicate"><FiCopy size={13} /></button>
-                      <button className="ms-btn-del" onClick={() => handleDeleteRow(rowIdx)} title="Delete"><FiTrash2 size={13} /></button>
+                      <button className="ms-btn-copy" onClick={() => handleDuplicateRow(filteredIdx)} title="Duplicate"><FiCopy size={13} /></button>
+                      <button className="ms-btn-del" onClick={() => handleDeleteRow(filteredIdx)} title="Delete"><FiTrash2 size={13} /></button>
                     </td>
                   </tr>
                 );
