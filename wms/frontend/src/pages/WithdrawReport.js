@@ -41,7 +41,7 @@ function WithdrawReport() {
         backgroundColor: '#ffffff'
       });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdf = new jsPDF('l', 'mm', 'a4');
       const pageW = pdf.internal.pageSize.getWidth();
       const pageH = pdf.internal.pageSize.getHeight();
       const imgW = pageW;
@@ -72,6 +72,10 @@ function WithdrawReport() {
 
   // Sort items by nearest location first (04, 08 = nearest; 01 = far; then by line A–DD)
   const items = sortLocationsNearestFirst(data.items || [], 'line_place');
+
+  const requestedMc = (it) => Number(it.requested_mc ?? it.quantity_mc ?? 0);
+  /** Actual picked qty for this line — same as Withdraw form (not live stock balance) */
+  const actualMc = (it) => Number(it.quantity_mc ?? 0);
 
   return (
     <>
@@ -119,10 +123,15 @@ function WithdrawReport() {
                 <th>Stack No</th>
                 <th>Request MC</th>
                 <th className="wr-col-balance">Actual (MC)</th>
+                <th className="wr-col-remark">Remark</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item, i) => (
+              {items.map((item) => {
+                const reqMc = requestedMc(item);
+                const actMc = actualMc(item);
+                const actualDiffers = actMc !== reqMc;
+                return (
                 <tr key={item.id}>
                   <td className="wr-bold">
                     {(item.stock_type === 'CONTAINER_EXTRA' || item.stock_type === 'IMPORT') && item.order_code
@@ -136,10 +145,12 @@ function WithdrawReport() {
                   <td className="wr-center">{item.sticker || ''}</td>
                   <td className="wr-center wr-bold">{item.line_place}</td>
                   <td className="wr-center">{item.stack_no || ''}</td>
-                  <td className="wr-center">{Number(item.requested_mc ?? item.quantity_mc)}</td>
-                  <td className="wr-center wr-balance">{Number(item.hand_on_balance ?? item.quantity_mc)}</td>
+                  <td className="wr-center">{reqMc}</td>
+                  <td className={`wr-center ${actualDiffers ? 'wr-balance' : ''}`}>{actMc}</td>
+                  <td className="wr-remark-cell" aria-label="Remark (handwriting)" />
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
 
@@ -151,11 +162,11 @@ function WithdrawReport() {
             </div>
             <div className="wr-summary-item">
               <span className="wr-summary-label">Requested (MC)</span>
-              <span className="wr-summary-value">{items.reduce((s, it) => s + Number(it.requested_mc || it.quantity_mc), 0)}</span>
+              <span className="wr-summary-value">{items.reduce((s, it) => s + requestedMc(it), 0)}</span>
             </div>
             <div className="wr-summary-item">
               <span className="wr-summary-label">Actual (MC)</span>
-              <span className="wr-summary-value">{items.reduce((s, it) => s + Number(it.hand_on_balance ?? it.quantity_mc), 0)}</span>
+              <span className="wr-summary-value">{items.reduce((s, it) => s + actualMc(it), 0)}</span>
             </div>
             <div className="wr-summary-item">
               <span className="wr-summary-label">Total KG</span>

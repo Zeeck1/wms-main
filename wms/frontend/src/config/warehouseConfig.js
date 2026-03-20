@@ -69,38 +69,41 @@ export function parseLocationCode(code) {
 }
 
 /**
- * Nearest vs Far location logic:
- * - Nearest: positions 04 and 08 (e.g. F04R, F08R) — closest to aisle
- * - Far: position 01 (e.g. F01L, F01R) — near wall
- * Same logic applies to both sides: A–O (left) and P–DD (right)
- * Returns 0 = nearest (first), 1 = other, 2 = far (last)
+ * Nearest location logic (warehouse CS-3):
+ *
+ * Lines A–O:
+ *   L side (Long rack, 8 pos): 08 nearest → 01 far
+ *   R side (Short rack, 4 pos): 04 nearest → 01 far
+ *
+ * Lines P–DD:
+ *   R side (Long rack, 8 pos): 08 nearest → 01 far
+ *   L side (Short rack, 4 pos): 04 nearest → 01 far
+ *
+ * Higher position number = closer to the aisle.
+ * Level 4 = nearest, then 3, 2, 1.
+ * If both sides tie on position+level, either may come first.
  */
-export function getLocationSortRank(code) {
+export function getLocationSortParts(code) {
   const parsed = parseLocationCode(code);
-  if (!parsed) return 2;
-  const pos = parsed.position;
-  if (pos === 4 || pos === 8) return 0;  // 04, 08 = nearest
-  if (pos === 1) return 2;               // 01 = far
-  return 1;                              // other positions
+  if (!parsed) return { position: 0, level: 0, line: 'ZZZZ' };
+  return {
+    position: parsed.position,
+    level: parsed.level || 0,
+    line: parsed.line,
+  };
 }
 
-/** Sort locations: nearest (04, 08) first, then others, far (01) last */
+/** Sort locations nearest-first: position desc → level desc → line alpha → raw alpha */
 export function sortLocationsNearestFirst(items, linePlaceKey = 'line_place') {
   const getKey = (it) => typeof it === 'string' ? it : (it && it[linePlaceKey]);
-  const parseLine = (lp) => {
-    if (!lp) return 'ZZZZ';
-    const m = String(lp).match(/^([A-Za-z]+)/);
-    return m ? m[1].toUpperCase() : 'ZZZZ';
-  };
   return [...items].sort((a, b) => {
     const lpA = getKey(a);
     const lpB = getKey(b);
-    const rankA = getLocationSortRank(lpA);
-    const rankB = getLocationSortRank(lpB);
-    if (rankA !== rankB) return rankA - rankB;
-    const lineA = parseLine(lpA);
-    const lineB = parseLine(lpB);
-    if (lineA !== lineB) return lineA.localeCompare(lineB);
+    const pA = getLocationSortParts(lpA);
+    const pB = getLocationSortParts(lpB);
+    if (pA.position !== pB.position) return pB.position - pA.position; // higher position = nearer
+    if (pA.level !== pB.level) return pB.level - pA.level;             // level 4 before 3 before 2 before 1
+    if (pA.line !== pB.line) return pA.line.localeCompare(pB.line);
     return String(lpA || '').localeCompare(String(lpB || ''));
   });
 }

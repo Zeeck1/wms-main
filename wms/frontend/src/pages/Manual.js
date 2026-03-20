@@ -27,7 +27,15 @@ const nonBulkCols = (isImport) => [
   { key: 'fish_name', field: 'fish_name', label: 'Fish Name', editable: true, type: 'text', w: 140 },
   { key: 'size', field: 'size', label: 'Size', editable: true, type: 'text', w: 90 },
   { key: 'bulk_weight_kg', field: 'bulk_weight_kg', label: 'KG', editable: true, type: 'number', w: 70 },
-  { key: 'cs_in_date', field: 'cs_in_date', label: 'Arrival Date', editable: true, type: 'date', w: 120 },
+  ...(isImport
+    ? [
+        { key: 'cs_in_date', field: 'cs_in_date', label: 'Arrival Date', editable: true, type: 'date', w: 130 },
+      ]
+    : [
+        { key: 'production_date', field: 'production_date', label: 'Production Date', editable: true, type: 'month_year', w: 130 },
+        { key: 'expiration_date', field: 'expiration_date', label: 'Expiration Date', editable: true, type: 'month_year', w: 130 },
+        { key: 'st_no', field: 'st_no', label: 'ST NO', editable: true, type: 'text', w: 90 },
+      ]),
   { key: '_kg_total', label: 'Total KG', editable: false, formula: true, w: 80 },
   { key: 'hand_on_balance_mc', field: 'hand_on_balance_mc', label: 'Balance MC', editable: true, type: 'number', w: 90, headerStyle: { background: '#5c1a1a', color: '#f8d7da' } },
   { key: 'line_place', field: 'line_place', label: 'Line', editable: true, type: 'text', w: 100 },
@@ -55,10 +63,62 @@ const toDateOnly = (d) => {
   if (typeof d === 'string') return d.split('T')[0];
   try { return new Date(d).toISOString().split('T')[0]; } catch { return ''; }
 };
+
+// For month/year inputs like "12/2024" stored as "YYYY-MM-01" in DB
+// Display rules:
+// - if only month/year (DB day is "01") => MM/YYYY
+// - if day exists => DD/MM/YYYY
+const toMonthYearDisplay = (d) => {
+  if (d == null || d === '') return '';
+  const s = String(d).trim();
+  // Already "MM/YYYY"
+  const mmY = s.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if (mmY) {
+    const mm = mmY[1].padStart(2, '0');
+    return `${mm}/${mmY[2]}`;
+  }
+  // "YYYY-MM-DD"
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const yyyy = iso[1];
+    const mm = iso[2];
+    const dd = iso[3];
+    if (dd === '01') return `${mm}/${yyyy}`;
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  return s;
+};
+
+const parseMonthYearInput = (raw) => {
+  if (raw == null) return '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  // "MM/YYYY" (or "M/YYYY")
+  const mmY = s.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if (mmY) {
+    const mm = mmY[1].padStart(2, '0');
+    const yyyy = mmY[2];
+    return `${yyyy}-${mm}-01`;
+  }
+  // "DD/MM/YYYY" (or "D/M/YYYY")
+  const ddmmyyyy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (ddmmyyyy) {
+    const dd = ddmmyyyy[1].padStart(2, '0');
+    const mm = ddmmyyyy[2].padStart(2, '0');
+    const yyyy = ddmmyyyy[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  // Allow already ISO dates
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return s;
+};
+
 const getCellDisplay = (row, col) => {
   if (col.formula) return (Number(row.bulk_weight_kg) || 0) * (Number(row.hand_on_balance_mc) || 0);
   const v = row[col.key];
   if (col.type === 'date') return toDateOnly(v);
+  if (col.type === 'month_year') return toMonthYearDisplay(v);
   return v ?? '';
 };
 
@@ -186,10 +246,20 @@ function Manual() {
     if (!row) return;
     const rowKey = rk(row);
     const orig = originalRows.find(o => rk(o) === rowKey);
-    const origVal = orig ? (col.type === 'date' ? toDateOnly(orig[col.key]) : String(orig[col.key] ?? '')) : '';
-    const normNew = col.type === 'date' ? toDateOnly(newVal) : String(newVal ?? '');
+    const origVal = orig
+      ? (col.type === 'date'
+          ? toDateOnly(orig[col.key])
+          : col.type === 'month_year'
+            ? parseMonthYearInput(orig[col.key])
+            : String(orig[col.key] ?? ''))
+      : '';
+    const normNew = col.type === 'date'
+      ? toDateOnly(newVal)
+      : col.type === 'month_year'
+        ? parseMonthYearInput(newVal)
+        : String(newVal ?? '');
     const editKey = `${rowKey}-${col.field}`;
-    setRows(prev => prev.map((r, i) => i !== rowIdx ? r : { ...r, [col.key]: newVal }));
+    setRows(prev => prev.map((r, i) => i !== rowIdx ? r : { ...r, [col.key]: normNew }));
     setPendingEditsMap(prev => {
       const next = { ...prev };
       if (normNew === origVal) delete next[editKey];
@@ -258,11 +328,17 @@ function Manual() {
     const src = filteredRows[rowIdx];
     if (!src) return;
     try {
+      const isImportTab = activeTab === 'IMPORT';
       const initial = {
         fish_name: src.fish_name, size: src.size, bulk_weight_kg: src.bulk_weight_kg,
         type: src.type, glazing: src.glazing, order_code: src.order_code,
-        cs_in_date: toDateOnly(src.cs_in_date), sticker: src.sticker,
-        remark: src.remark, st_no: src.st_no,
+        production_date: isImportTab ? toDateOnly(src.cs_in_date) : toDateOnly(src.production_date),
+        expiration_date: isImportTab ? null : toDateOnly(src.expiration_date),
+        st_no: src.st_no,
+        // backend manual row creation still requires cs_in_date
+        cs_in_date: toDateOnly(src.cs_in_date || src.production_date),
+        sticker: src.sticker,
+        remark: src.remark,
         hand_on_balance_mc: src.hand_on_balance_mc,
         line_place: `${src.line_place}-CPY`, stack_no: src.stack_no, stack_total: src.stack_total,
       };
@@ -288,8 +364,16 @@ function Manual() {
       const origRow = originalRows.find(r => rk(r) === action.rowKey);
       if (col?.field && origRow) {
         const editKey = `${action.rowKey}-${col.field}`;
-        const origVal = col.type === 'date' ? toDateOnly(origRow[col.key]) : String(origRow[col.key] ?? '');
-        const reverted = col.type === 'date' ? toDateOnly(action.oldValue) : String(action.oldValue ?? '');
+        const origVal = col.type === 'date'
+          ? toDateOnly(origRow[col.key])
+          : col.type === 'month_year'
+            ? parseMonthYearInput(origRow[col.key])
+            : String(origRow[col.key] ?? '');
+        const reverted = col.type === 'date'
+          ? toDateOnly(action.oldValue)
+          : col.type === 'month_year'
+            ? parseMonthYearInput(action.oldValue)
+            : String(action.oldValue ?? '');
         setPendingEditsMap(prev => {
           const next = { ...prev };
           if (reverted === origVal) delete next[editKey]; else next[editKey] = { lot_id: origRow.lot_id, location_id: origRow.location_id, field: col.field, value: reverted };
@@ -379,13 +463,19 @@ function Manual() {
     if (!copiedRow) return;
     try {
       const src = copiedRow;
+      const isImportTab = activeTab === 'IMPORT';
       const res = await manualAddRow({
         stock_type: activeTab,
         initial: {
           fish_name: src.fish_name, size: src.size, bulk_weight_kg: src.bulk_weight_kg,
           type: src.type, glazing: src.glazing, order_code: src.order_code,
-          cs_in_date: toDateOnly(src.cs_in_date), sticker: src.sticker,
-          remark: src.remark, st_no: src.st_no,
+          production_date: isImportTab ? toDateOnly(src.cs_in_date) : toDateOnly(src.production_date),
+          expiration_date: isImportTab ? null : toDateOnly(src.expiration_date),
+          st_no: src.st_no,
+          // backend manual row creation still requires cs_in_date
+          cs_in_date: toDateOnly(isImportTab ? src.cs_in_date : src.production_date),
+          sticker: src.sticker,
+          remark: src.remark,
           hand_on_balance_mc: src.hand_on_balance_mc,
           line_place: `${src.line_place}-CPY`, stack_no: src.stack_no, stack_total: src.stack_total,
         }
@@ -546,15 +636,26 @@ function Manual() {
                           </td>
                         );
                       }
-                      const val = col.type === 'date' ? toDateOnly(row[col.key]) : (row[col.key] ?? '');
-                      const origVal = orig ? (col.type === 'date' ? toDateOnly(orig[col.key]) : String(orig[col.key] ?? '')) : val;
-                      const isChanged = String(val) !== String(origVal);
+                      const valNormalized = col.type === 'date'
+                        ? toDateOnly(row[col.key])
+                        : col.type === 'month_year'
+                          ? parseMonthYearInput(row[col.key])
+                          : (row[col.key] ?? '');
+                      const origValNormalized = orig
+                        ? (col.type === 'date'
+                            ? toDateOnly(orig[col.key])
+                            : col.type === 'month_year'
+                              ? parseMonthYearInput(orig[col.key])
+                              : String(orig[col.key] ?? ''))
+                        : valNormalized;
+                      const isChanged = String(valNormalized) !== String(origValNormalized);
+                      const inputDisplayVal = col.type === 'month_year' ? toMonthYearDisplay(row[col.key]) : valNormalized;
                       return (
                         <td key={col.key} className={`ms-cell ms-cell-ed ${isActive ? 'ms-cell-active' : ''} ${isChanged ? 'ms-cell-dirty' : ''}`}>
                           <input
                             className={`ms-input ${col.type === 'number' ? 'ms-input-num' : ''}`}
-                            type={col.type === 'date' ? 'date' : col.type === 'number' ? 'number' : 'text'}
-                            value={val}
+                            type={col.type === 'month_year' ? 'text' : col.type === 'date' ? 'date' : col.type === 'number' ? 'number' : 'text'}
+                            value={inputDisplayVal}
                             onChange={e => handleCellChange(fullIdx, col, e.target.value)}
                             onKeyDown={e => {
                               if (e.key === 'Tab' || e.key === 'Enter') e.currentTarget.blur();

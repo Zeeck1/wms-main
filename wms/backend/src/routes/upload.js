@@ -250,13 +250,39 @@ router.post('/container-extra', upload.single('file'), async (req, res) => {
         // 3. Parse dates
         let productionDate = null;
         if (productionDateRaw) {
-          const d = new Date(productionDateRaw);
-          if (!isNaN(d.getTime())) productionDate = d.toISOString().split('T')[0];
+          const raw = productionDateRaw;
+          if (raw instanceof Date && !isNaN(raw.getTime())) {
+            productionDate = raw.toISOString().split('T')[0];
+          } else {
+            const s = raw.toString().trim();
+            const mmY = s.match(/^(\d{1,2})[\/\-](\d{4})$/);
+            if (mmY) {
+              const mm = mmY[1].padStart(2, '0');
+              const yyyy = mmY[2];
+              productionDate = `${yyyy}-${mm}-01`;
+            } else {
+              const d = new Date(s);
+              if (!isNaN(d.getTime())) productionDate = d.toISOString().split('T')[0];
+            }
+          }
         }
         let expirationDate = null;
         if (expirationDateRaw) {
-          const d = new Date(expirationDateRaw);
-          if (!isNaN(d.getTime())) expirationDate = d.toISOString().split('T')[0];
+          const raw = expirationDateRaw;
+          if (raw instanceof Date && !isNaN(raw.getTime())) {
+            expirationDate = raw.toISOString().split('T')[0];
+          } else {
+            const s = raw.toString().trim();
+            const mmY = s.match(/^(\d{1,2})[\/\-](\d{4})$/);
+            if (mmY) {
+              const mm = mmY[1].padStart(2, '0');
+              const yyyy = mmY[2];
+              expirationDate = `${yyyy}-${mm}-01`;
+            } else {
+              const d = new Date(s);
+              if (!isNaN(d.getTime())) expirationDate = d.toISOString().split('T')[0];
+            }
+          }
         }
 
         // 4. Create lot with extra fields
@@ -364,8 +390,23 @@ router.post('/import', upload.single('file'), async (req, res) => {
 
         let arrivalDate = null;
         if (arrivalDateRaw) {
-          const d = new Date(arrivalDateRaw);
-          if (!isNaN(d.getTime())) arrivalDate = d.toISOString().split('T')[0];
+          const raw = arrivalDateRaw;
+          if (raw instanceof Date && !isNaN(raw.getTime())) {
+            arrivalDate = raw.toISOString().split('T')[0];
+          } else {
+            const s = raw.toString().trim();
+            // Expect Excel format: DD/MM/YYYY
+            const ddmmyyyy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            if (ddmmyyyy) {
+              const dd = ddmmyyyy[1].padStart(2, '0');
+              const mm = ddmmyyyy[2].padStart(2, '0');
+              const yyyy = ddmmyyyy[3];
+              arrivalDate = `${yyyy}-${mm}-${dd}`;
+            } else {
+              const d = new Date(s);
+              if (!isNaN(d.getTime())) arrivalDate = d.toISOString().split('T')[0];
+            }
+          }
         }
         if (!arrivalDate) arrivalDate = new Date().toISOString().split('T')[0];
 

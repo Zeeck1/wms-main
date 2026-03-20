@@ -137,9 +137,11 @@ router.post('/row', async (req, res) => {
 
     const lotNo = `MAN-${Date.now()}`;
     const csIn = initial.cs_in_date || new Date().toISOString().split('T')[0];
+    const productionDate = initial.production_date || csIn;
+    const expirationDate = initial.expiration_date || null;
     const [lt] = await conn.query(
-      'INSERT INTO lots (lot_no, cs_in_date, sticker, product_id, remark, st_no) VALUES (?,?,?,?,?,?)',
-      [lotNo, csIn, initial.sticker || null, productId, initial.remark || null, initial.st_no || null]);
+      'INSERT INTO lots (lot_no, cs_in_date, sticker, product_id, remark, st_no, production_date, expiration_date) VALUES (?,?,?,?,?,?,?,?)',
+      [lotNo, csIn, initial.sticker || null, productId, initial.remark || null, initial.st_no || null, productionDate, expirationDate]);
     const lotId = lt.insertId;
 
     const mc = initial.hand_on_balance_mc != null ? (parseInt(initial.hand_on_balance_mc) || 1) : 1;

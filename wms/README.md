@@ -73,6 +73,47 @@ WMS/
 - **Node.js** v18+ (https://nodejs.org)
 - **MySQL** 8.0+ (https://dev.mysql.com/downloads/)
 
+## Running Without XAMPP
+
+This app only needs **MySQL** and **Node.js** — no Apache or PHP. You can run it without XAMPP in any of these ways:
+
+### Option 1: Standalone MySQL (recommended)
+
+1. **Install MySQL Server** (not XAMPP):
+   - **Windows:** [MySQL Installer](https://dev.mysql.com/downloads/installer/) → choose “MySQL Server” only.
+   - **macOS:** `brew install mysql` then `brew services start mysql`
+   - **Linux:** e.g. `sudo apt install mysql-server` then `sudo systemctl start mysql`
+
+2. **Set a root password** during install (or after, via MySQL shell).
+
+3. **Create `wms/backend/.env`** with your MySQL details:
+   ```env
+   DB_HOST=localhost
+   DB_PORT=3306
+   DB_USER=root
+   DB_PASSWORD=your_mysql_password
+   DB_NAME=wms_db
+   PORT=5000
+   ```
+
+4. **Init DB and run the app** (same as below):  
+   `cd wms/backend` → `npm install` → `npm run db:init` → `npm run dev`.  
+   In another terminal: `cd wms/frontend` → `npm install` → `npm start`.
+
+### Option 2: MySQL in Docker
+
+If you use Docker, run MySQL only:
+
+```bash
+docker run -d --name wms-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=yourpassword -e MYSQL_DATABASE=wms_db mysql:8
+```
+
+Then in `backend/.env` use `DB_PASSWORD=yourpassword` (and `DB_HOST=localhost` if the backend runs on the host). After that, run `npm run db:init` and start backend + frontend as above.
+
+### Option 3: Cloud MySQL
+
+Use a hosted MySQL (e.g. PlanetScale, AWS RDS, or your host’s MySQL). Put the host, port, user, password, and database name in `backend/.env` (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`). No local MySQL or XAMPP needed.
+
 ## Setup Instructions
 
 ### 1. Clone / Download the Project

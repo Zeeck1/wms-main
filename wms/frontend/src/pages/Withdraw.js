@@ -134,12 +134,13 @@ function Withdraw() {
         );
       });
     }
-    // Group by product identity (include stock_type and order_code so BULK vs EXTRA / different orders are separate)
+    // Group by product identity + sticker so each sticker variant is its own group (matches Stock Table rows)
     const groups = {};
     filtered.forEach(item => {
       const st = item.stock_type || 'BULK';
       const oc = item.order_code || '';
-      const key = `${item.fish_name}||${item.size}||${item.bulk_weight_kg}||${item.type || ''}||${item.glazing || ''}||${st}||${oc}`;
+      const stk = item.sticker || '';
+      const key = `${item.fish_name}||${item.size}||${item.bulk_weight_kg}||${item.type || ''}||${item.glazing || ''}||${st}||${oc}||${stk}`;
       if (!groups[key]) {
         groups[key] = {
           key,
@@ -150,7 +151,7 @@ function Withdraw() {
           glazing: item.glazing || '',
           stock_type: st,
           order_code: oc,
-          sticker_sample: item.sticker || '',
+          sticker: stk,
           total_mc: 0,
           total_kg: 0,
           subItems: []
@@ -158,10 +159,7 @@ function Withdraw() {
       }
       const mc = Number(item.hand_on_balance_mc) || 0;
       groups[key].total_mc += mc;
-      groups[key].total_kg += mc * Number(item.bulk_weight_kg);
-      if (!groups[key].sticker_sample && item.sticker) {
-        groups[key].sticker_sample = item.sticker;
-      }
+      groups[key].total_kg += Number(item.hand_on_balance_kg) || 0;
       groups[key].subItems.push(item);
     });
     // Sort sub-items by nearest location first (04, 08 = nearest; 01 = far; then by line A–DD)
@@ -554,7 +552,7 @@ function Withdraw() {
                     const baseLabel = typeOrGlazing
                       ? `${group.fish_name}/${group.size}/${typeOrGlazing}`
                       : `${group.fish_name}/${group.size}`;
-                    const stickerText = group.sticker_sample ? ` (${group.sticker_sample})` : '';
+                    const stickerText = group.sticker ? ` (${group.sticker})` : '';
                     const totalKg = Number(group.total_kg) || (group.total_mc * Number(group.bulk_weight_kg));
                     const stockLabel = `${baseLabel}${stickerText} = ${group.total_mc} MC. [${totalKg.toLocaleString(undefined)} KG]`;
                     const st = group.stock_type || 'BULK';

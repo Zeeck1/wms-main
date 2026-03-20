@@ -4,6 +4,8 @@ import { FiDownload, FiSearch, FiPackage, FiBox, FiTrash2, FiAnchor, FiChevronDo
 import { toast } from 'react-toastify';
 import { getInventory, deleteAllStockData } from '../services/api';
 import * as XLSX from 'xlsx';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 const TABS = [
   { id: 'BULK', label: 'Bulk', icon: <FiPackage /> },
@@ -38,6 +40,7 @@ const CE_COLUMNS = [
   { key: 'hand_on_balance_kg', label: 'Total KG' },
   { key: 'hand_on_balance_mc', label: 'Balance MC' },
   { key: 'line_place', label: 'Line' },
+  { key: 'st_no', label: 'ST NO' },
   { key: 'remark', label: 'Remark' }
 ];
 
@@ -52,6 +55,48 @@ const CE_IMPORT_COLUMNS = [
   { key: 'line_place', label: 'Line' },
   { key: 'remark', label: 'Remark' }
 ];
+
+// Month/year dates from Excel like "12/2024" are stored in DB as "YYYY-MM-01".
+// Display rules:
+// - if only month/year (DB day is "01") => MM/YYYY
+// - if day exists => DD/MM/YYYY
+const formatMonthYearDisplay = (v) => {
+  if (v == null || v === '') return v;
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const yyyy = iso[1];
+    const mm = iso[2];
+    const dd = iso[3];
+    if (dd === '01') return `${mm}/${yyyy}`;
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  const mmY = s.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if (mmY) {
+    const mm = mmY[1].padStart(2, '0');
+    return `${mm}/${mmY[2]}`;
+  }
+  const ddmmyyyy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (ddmmyyyy) {
+    const dd = ddmmyyyy[1].padStart(2, '0');
+    const mm = ddmmyyyy[2].padStart(2, '0');
+    const yyyy = ddmmyyyy[3];
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  return s;
+};
+
+// ISO date YYYY-MM-DD => DD/MM/YYYY (for IMPORT Arrival Date)
+const formatISODateToDMY = (v) => {
+  if (v == null || v === '') return v;
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!iso) return s;
+  const yyyy = iso[1];
+  const mm = iso[2];
+  const dd = iso[3];
+  return `${dd}/${mm}/${yyyy}`;
+};
 
 // ─── Google Sheets–style column filter dropdown ────────────────────────
 function ColumnFilterDropdown({ columnKey, allValues, selected, onApply, onClear }) {
@@ -176,16 +221,72 @@ function StockTable() {
   const [searchQuery, setSearchQuery] = useState('');
   const [columnFilters, setColumnFilters] = useState({});
   const [rowLimit, setRowLimit] = useState(50);
+  const reportContainerRef = useRef(null);
 
   const isCE = activeTab === 'CONTAINER_EXTRA';
   const isImport = activeTab === 'IMPORT';
   const isNonBulk = isCE || isImport;
   const columns = isCE ? CE_COLUMNS : (isImport ? CE_IMPORT_COLUMNS : BULK_COLUMNS);
 
+  // BULK: show/hide optional columns (default OFF)
+  const [showBulkLinesPlace, setShowBulkLinesPlace] = useState(false);
+  const [showBulkStackNo, setShowBulkStackNo] = useState(false);
+  const [showBulkStackTotal, setShowBulkStackTotal] = useState(false);
+
+  // Container Extra: show/hide optional columns (default OFF)
+  const [showCElinePlace, setShowCElinePlace] = useState(false);
+  const [showCEstNo, setShowCEstNo] = useState(false);
+
+  const bulkTableColumns = useMemo(() => {
+    if (activeTab !== 'BULK') return columns;
+    return BULK_COLUMNS.filter(col => {
+      if (col.key === 'line_place') return showBulkLinesPlace;
+      if (col.key === 'stack_no') return showBulkStackNo;
+      if (col.key === 'stack_total') return showBulkStackTotal;
+      return true;
+    });
+  }, [activeTab, columns, showBulkLinesPlace, showBulkStackNo, showBulkStackTotal]);
+
+  const bulkColSpanBeforeOldBalance =
+    1 + // '#' column
+    7 + // fish_name, size, bulk_weight_kg, type, glazing, cs_in_date, sticker
+    (showBulkLinesPlace ? 1 : 0) +
+    (showBulkStackNo ? 1 : 0) +
+    (showBulkStackTotal ? 1 : 0);
+
+  const visibleColumns = useMemo(() => {
+    if (activeTab !== 'CONTAINER_EXTRA') return columns;
+    return CE_COLUMNS.filter(col => {
+      if (col.key === 'line_place') return showCElinePlace;
+      if (col.key === 'st_no') return showCEstNo;
+      return true;
+    });
+  }, [activeTab, columns, showCElinePlace, showCEstNo]);
+
+  useEffect(() => {
+    if (activeTab !== 'CONTAINER_EXTRA') {
+      setShowCElinePlace(false);
+      setShowCEstNo(false);
+      return;
+    }
+    setColumnFilters(prev => {
+      const next = { ...prev };
+      if (!showCElinePlace) delete next.line_place;
+      if (!showCEstNo) delete next.st_no;
+      return next;
+    });
+  }, [activeTab, showCElinePlace, showCEstNo]);
+
   const fetchInventory = useCallback(async () => {
     try {
       const res = await getInventory({ stock_type: activeTab });
-      setInventory(res.data);
+      const normalized = (res.data || []).map(r => ({
+        ...r,
+        production_date: formatMonthYearDisplay(r.production_date),
+        expiration_date: formatMonthYearDisplay(r.expiration_date),
+        cs_in_date: activeTab === 'IMPORT' ? formatISODateToDMY(r.cs_in_date) : r.cs_in_date,
+      }));
+      setInventory(normalized);
     } catch (err) {
       toast.error('Failed to load inventory');
     } finally {
@@ -282,15 +383,38 @@ function StockTable() {
     if (isNonBulk) {
       const orderLabel = isImport ? 'Invoice No' : 'Order';
       if (isCE) {
-        data = source.map((r, i) => ({
-          '#': i + 1, [orderLabel]: r.order_code || '', 'Fish Name': r.fish_name,
-          'Size': r.size, 'KG': Number(r.bulk_weight_kg),
-          'Production Date': r.production_date || '', 'Expiration Date': r.expiration_date || '',
-          'Line': r.line_place, 'Balance MC': Number(r.hand_on_balance_mc),
-          'Total KG': Number(r.hand_on_balance_kg), 'Remark': r.remark || ''
-        }));
-        data.push({ '#': '', [orderLabel]: '', 'Fish Name': 'TOTAL', 'Size': '', 'KG': '',
-          'Production Date': '', 'Expiration Date': '', 'Line': '', 'Balance MC': totalMC, 'Total KG': totalKG, 'Remark': '' });
+        data = source.map((r, i) => {
+          const row = {
+            '#': i + 1,
+            [orderLabel]: r.order_code || '',
+            'Fish Name': r.fish_name,
+            'Size': r.size,
+            'KG': Number(r.bulk_weight_kg),
+            'Production Date': r.production_date || '',
+            'Expiration Date': r.expiration_date || '',
+            'Balance MC': Number(r.hand_on_balance_mc),
+            'Total KG': Number(r.hand_on_balance_kg),
+            'Remark': r.remark || ''
+          };
+          if (showCElinePlace) row['Line'] = r.line_place || '';
+          if (showCEstNo) row['ST NO'] = r.st_no || '';
+          return row;
+        });
+        const totalRow = {
+          '#': '',
+          [orderLabel]: '',
+          'Fish Name': 'TOTAL',
+          'Size': '',
+          'KG': '',
+          'Production Date': '',
+          'Expiration Date': '',
+          'Balance MC': totalMC,
+          'Total KG': totalKG,
+          'Remark': ''
+        };
+        if (showCElinePlace) totalRow['Line'] = '';
+        if (showCEstNo) totalRow['ST NO'] = '';
+        data.push(totalRow);
       } else {
         data = source.map((r, i) => ({
           '#': i + 1, [orderLabel]: r.order_code || '', 'Fish Name': r.fish_name,
@@ -322,6 +446,73 @@ function StockTable() {
     const prefix = isCE ? 'Container_Extra' : isImport ? 'Import' : 'Bulk';
     XLSX.writeFile(wb, `WMS_${prefix}_Stock_${new Date().toISOString().split('T')[0]}.xlsx`);
     toast.success('Excel file downloaded');
+  };
+
+  const exportPDF = async () => {
+    if (!reportContainerRef.current) return;
+    if (filteredInventory.length === 0) {
+      toast.warn('No data to export');
+      return;
+    }
+
+    const el = reportContainerRef.current;
+    const prevMaxHeight = el.style.maxHeight;
+    const prevOverflow = el.style.overflow;
+    try {
+      // Expand the container so the full table is rendered for capture
+      el.style.maxHeight = 'none';
+      el.style.overflow = 'visible';
+      await new Promise(r => setTimeout(r, 100));
+
+      const table = el.querySelector('table');
+      if (!table) {
+        toast.error('Table not found');
+        return;
+      }
+
+      const canvas = await html2canvas(table, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+      const pdfW = 297; // landscape A4 width in mm
+      const pdfH = 210; // landscape A4 height in mm
+      const pageHeightPx = Math.floor(canvas.width * (pdfH / pdfW));
+      const pageCount = Math.ceil(canvas.height / pageHeightPx);
+      const imgWidthMm = pdfW;
+
+      for (let i = 0; i < pageCount; i++) {
+        const sy = i * pageHeightPx;
+        const sh = Math.min(pageHeightPx, canvas.height - sy);
+
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sh;
+        const ctx = pageCanvas.getContext('2d');
+        if (!ctx) continue;
+        ctx.drawImage(canvas, 0, sy, canvas.width, sh, 0, 0, canvas.width, sh);
+
+        const pageImg = pageCanvas.toDataURL('image/png');
+        const pageImgH = sh * (imgWidthMm / canvas.width);
+
+        if (i > 0) pdf.addPage();
+        pdf.addImage(pageImg, 'PNG', 0, 0, imgWidthMm, pageImgH);
+      }
+
+      const prefix = isCE ? 'Container_Extra' : isImport ? 'Import' : 'Bulk';
+      const filename = `WMS_${prefix}_Stock_${new Date().toISOString().split('T')[0]}.pdf`;
+      pdf.save(filename);
+      toast.success('PDF downloaded');
+    } catch (err) {
+      toast.error('Failed to generate PDF');
+    } finally {
+      el.style.maxHeight = prevMaxHeight;
+      el.style.overflow = prevOverflow;
+    }
   };
 
   const exportAsText = async () => {
@@ -356,10 +547,10 @@ function StockTable() {
       text = rows.join('\r\n') + '\r\n\r\nTOTAL MC\t' + totalMC + '\r\nTOTAL KG\t' + totalKG;
     } else {
       const getHeaderLabel = (col) => col.label != null ? col.label : (col.key === 'order_code' ? (isImport ? 'Invoice No' : 'Order') : col.key);
-      const headerLabels = ['#', ...columns.map(getHeaderLabel)];
+      const headerLabels = ['#', ...visibleColumns.map(getHeaderLabel)];
       const rows = filteredInventory.map((r, i) => {
         const cells = [i + 1];
-        columns.forEach(col => {
+        visibleColumns.forEach(col => {
           const val = r[col.key];
           const isKg = col.key === 'bulk_weight_kg' || col.key === 'hand_on_balance_kg';
           if (isKg) cells.push(Number(val || 0));
@@ -412,6 +603,9 @@ function StockTable() {
           <button className="btn btn-success" onClick={exportExcel}>
             <FiDownload /> Export to Excel
           </button>
+          <button className="btn btn-outline" onClick={exportPDF} disabled={filteredInventory.length === 0}>
+            <FiDownload /> Export to PDF
+          </button>
         </div>
       </div>
       <div className="page-body">
@@ -449,6 +643,63 @@ function StockTable() {
           </div>
         </div>
 
+        {activeTab === 'BULK' && (
+          <div className="st-bulk-col-toggles">
+            <div className="st-bulk-col-left">
+              <span className="st-bulk-col-label">Columns (BULK)</span>
+              <span className="st-bulk-col-hint">Normally OFF</span>
+            </div>
+            <div className="st-bulk-col-right">
+              <button
+                type="button"
+                className={`st-bulk-pill ${showBulkLinesPlace ? 'active' : ''}`}
+                onClick={() => setShowBulkLinesPlace(v => !v)}
+              >
+                Lines/Place
+              </button>
+              <button
+                type="button"
+                className={`st-bulk-pill ${showBulkStackNo ? 'active' : ''}`}
+                onClick={() => setShowBulkStackNo(v => !v)}
+              >
+                Stack No
+              </button>
+              <button
+                type="button"
+                className={`st-bulk-pill ${showBulkStackTotal ? 'active' : ''}`}
+                onClick={() => setShowBulkStackTotal(v => !v)}
+              >
+                Stack Total
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'CONTAINER_EXTRA' && (
+          <div className="st-bulk-col-toggles">
+            <div className="st-bulk-col-left">
+              <span className="st-bulk-col-label">Columns (Container Extra)</span>
+              <span className="st-bulk-col-hint">Normally OFF</span>
+            </div>
+            <div className="st-bulk-col-right">
+              <button
+                type="button"
+                className={`st-bulk-pill ${showCElinePlace ? 'active' : ''}`}
+                onClick={() => setShowCElinePlace(v => !v)}
+              >
+                LINE
+              </button>
+              <button
+                type="button"
+                className={`st-bulk-pill ${showCEstNo ? 'active' : ''}`}
+                onClick={() => setShowCEstNo(v => !v)}
+              >
+                ST NO
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeFilterCount > 0 && (
           <div className="gs-active-filters-bar">
             <span>{activeFilterCount} column filter{activeFilterCount > 1 ? 's' : ''} active</span>
@@ -463,13 +714,13 @@ function StockTable() {
           <div className="stat-card"><div className="stat-info"><h4>Total Stacks</h4><div className="stat-value" style={{ fontSize: '1.3rem' }}>{totalStacks}</div></div></div>
         </div>
 
-        <div className="table-container" style={{ maxHeight: '65vh', overflow: 'auto' }}>
+        <div className="table-container" ref={reportContainerRef} style={{ maxHeight: '65vh', overflow: 'auto' }}>
           {isNonBulk ? (
             <table className="excel-table gs-table">
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>#</th>
-                  {columns.map(col => renderHeaderCell(
+                  {visibleColumns.map(col => renderHeaderCell(
                     col,
                     col.label != null ? col.label : (col.key === 'order_code' ? (isImport ? 'Invoice No' : 'Order') : col.key),
                     col.key === 'hand_on_balance_mc' ? { background: '#5c1a1a', color: '#f8d7da' } : {}
@@ -478,23 +729,24 @@ function StockTable() {
               </thead>
               <tbody>
                 {inventory.length === 0 ? (
-                  <tr><td colSpan={columns.length + 1} style={{ textAlign: 'center', padding: 60, color: '#999' }}>
+                  <tr><td colSpan={visibleColumns.length + 1} style={{ textAlign: 'center', padding: 60, color: '#999' }}>
                     No {isImport ? 'Import' : 'Container Extra'} stock found. Upload data via Excel Upload.
                   </td></tr>
                 ) : filteredInventory.length === 0 ? (
-                  <tr><td colSpan={columns.length + 1} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
+                  <tr><td colSpan={visibleColumns.length + 1} style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
                 ) : displayRows.map((r, i) => (
                   <tr key={i}>
                     <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
-                    {columns.map(col => {
+                    {visibleColumns.map(col => {
                       const val = r[col.key];
                       const isMC = col.key === 'hand_on_balance_mc';
                       const isKg = col.key === 'bulk_weight_kg' || col.key === 'hand_on_balance_kg';
                       const isOrder = col.key === 'order_code';
                       const isLine = col.key === 'line_place';
+                      const isStNo = col.key === 'st_no';
                       return (
                         <td key={col.key} className={isKg || isMC ? 'num-cell' : ''} style={isMC ? { background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' } : {}}>
-                          {isOrder || isLine ? <strong>{val ?? '-'}</strong> : isKg ? `${Number(val || 0).toFixed(0)} KG` : (val != null && val !== '' ? String(val) : '-')}
+                          {isOrder || isLine || isStNo ? <strong>{val ?? '-'}</strong> : isKg ? `${Number(val || 0).toFixed(0)} KG` : (val != null && val !== '' ? String(val) : '-')}
                         </td>
                       );
                     })}
@@ -505,11 +757,30 @@ function StockTable() {
                 <tfoot>
                   <tr>
                     <td></td>
-                    <td colSpan={5} style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
-                    <td></td>
-                    <td className="num-cell">{totalKG.toFixed(0)} KG</td>
-                    <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>
-                    <td colSpan={Math.max(0, columns.length - 8)}></td>
+                    {visibleColumns.map((col) => {
+                      if (col.key === 'hand_on_balance_kg') {
+                        return (
+                          <td key={col.key} className="num-cell">
+                            {totalKG.toFixed(0)} KG
+                          </td>
+                        );
+                      }
+                      if (col.key === 'hand_on_balance_mc') {
+                        return (
+                          <td key={col.key} className="num-cell" style={{ fontSize: '0.95rem' }}>
+                            {totalMC}
+                          </td>
+                        );
+                      }
+                      if (visibleColumns[0]?.key === col.key) {
+                        return (
+                          <td key={col.key} style={{ textAlign: 'right', fontWeight: 700 }}>
+                            TOTALS:
+                          </td>
+                        );
+                      }
+                      return <td key={col.key}></td>;
+                    })}
                   </tr>
                 </tfoot>
               )}
@@ -519,53 +790,45 @@ function StockTable() {
               <thead>
                 <tr>
                   <th style={{ width: 40 }}>#</th>
-                  {renderHeaderCell({ key: 'fish_name' }, 'Fish Name')}
-                  {renderHeaderCell({ key: 'size' }, 'Size')}
-                  {renderHeaderCell({ key: 'bulk_weight_kg' }, 'Bulk Wt (KG)')}
-                  {renderHeaderCell({ key: 'type' }, 'Type')}
-                  {renderHeaderCell({ key: 'glazing' }, 'Glazing')}
-                  {renderHeaderCell({ key: 'cs_in_date' }, 'CS In Date')}
-                  {renderHeaderCell({ key: 'sticker' }, 'Sticker')}
-                  {renderHeaderCell({ key: 'line_place' }, 'Lines / Place')}
-                  {renderHeaderCell({ key: 'stack_no' }, 'Stack No')}
-                  {renderHeaderCell({ key: 'stack_total' }, 'Stack Total')}
-                  {renderHeaderCell({ key: 'old_balance_mc' }, 'Old Balance', { background: '#2d4a1e', color: '#d4edda' })}
-                  {renderHeaderCell({ key: 'new_income_mc' }, 'New Income', { background: '#1a3a5c', color: '#cce5ff' })}
-                  {renderHeaderCell({ key: 'hand_on_balance_mc' }, 'Hand On Balance', { background: '#5c1a1a', color: '#f8d7da' })}
-                  {renderHeaderCell({ key: 'hand_on_balance_kg' }, 'KG')}
+                  {bulkTableColumns.map(col => renderHeaderCell(col, col.label, col.headerStyle || {}))}
                 </tr>
               </thead>
               <tbody>
                 {inventory.length === 0 ? (
-                  <tr><td colSpan="15" style={{ textAlign: 'center', padding: 60, color: '#999' }}>
-                    No stock data found. Record some Stock IN first or upload an Excel file.
-                  </td></tr>
+                  <tr>
+                    <td colSpan={bulkTableColumns.length + 1} style={{ textAlign: 'center', padding: 60, color: '#999' }}>
+                      No stock data found. Record some Stock IN first or upload an Excel file.
+                    </td>
+                  </tr>
                 ) : filteredInventory.length === 0 ? (
-                  <tr><td colSpan="15" style={{ textAlign: 'center', padding: 40, color: '#999' }}>No rows match the filters</td></tr>
+                  <tr>
+                    <td colSpan={bulkTableColumns.length + 1} style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                      No rows match the filters
+                    </td>
+                  </tr>
                 ) : displayRows.map((r, i) => (
                   <tr key={i}>
                     <td className="text-center" style={{ color: '#999' }}>{i + 1}</td>
-                    <td><strong>{r.fish_name}</strong></td>
-                    <td>{r.size}</td>
-                    <td className="num-cell">{Number(r.bulk_weight_kg).toFixed(2)}</td>
-                    <td>{r.type || '-'}</td>
-                    <td>{r.glazing || '-'}</td>
-                    <td>{r.cs_in_date}</td>
-                    <td>{r.sticker || '-'}</td>
-                    <td><strong>{r.line_place}</strong></td>
-                    <td className="num-cell">{r.stack_no}</td>
-                    <td className="num-cell">{r.stack_total}</td>
-                    <td className="num-cell" style={{ background: '#f0fdf4' }}>{r.old_balance_mc}</td>
-                    <td className="num-cell" style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: 600 }}>{r.new_income_mc || '-'}</td>
-                    <td className="num-cell" style={{ background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' }}>{r.hand_on_balance_mc}</td>
-                    <td className="num-cell">{Number(r.hand_on_balance_kg).toFixed(2)}</td>
+                    {bulkTableColumns.map(col => {
+                      const val = r[col.key];
+                      if (col.key === 'fish_name') return <td key={col.key}><strong>{val || '-'}</strong></td>;
+                      if (col.key === 'line_place') return <td key={col.key}><strong>{val || '-'}</strong></td>;
+                      if (col.key === 'bulk_weight_kg') return <td key={col.key} className="num-cell">{Number(val || 0).toFixed(2)}</td>;
+                      if (col.key === 'hand_on_balance_kg') return <td key={col.key} className="num-cell">{Number(val || 0).toFixed(2)}</td>;
+                      if (col.key === 'stack_no' || col.key === 'stack_total') return <td key={col.key} className="num-cell">{val ?? '-'}</td>;
+                      if (col.key === 'old_balance_mc') return <td key={col.key} className="num-cell" style={{ background: '#f0fdf4' }}>{val ?? 0}</td>;
+                      if (col.key === 'new_income_mc') return <td key={col.key} className="num-cell" style={{ background: '#eff6ff', color: '#1d4ed8', fontWeight: 600 }}>{val ?? '-'}</td>;
+                      if (col.key === 'hand_on_balance_mc') return <td key={col.key} className="num-cell" style={{ background: '#fef2f2', fontWeight: 700, fontSize: '0.9rem' }}>{val ?? 0}</td>;
+                      // default rendering
+                      return <td key={col.key}>{val ?? '-'}</td>;
+                    })}
                   </tr>
                 ))}
               </tbody>
               {displayRows.length > 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan="11" style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
+                    <td colSpan={bulkColSpanBeforeOldBalance} style={{ textAlign: 'right', fontWeight: 700 }}>TOTALS:</td>
                     <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.old_balance_mc), 0)}</td>
                     <td className="num-cell">{filteredInventory.reduce((s, r) => s + Number(r.new_income_mc), 0)}</td>
                     <td className="num-cell" style={{ fontSize: '0.95rem' }}>{totalMC}</td>

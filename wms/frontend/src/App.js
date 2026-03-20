@@ -7,7 +7,7 @@ import {
   FiGrid, FiPackage, FiMapPin, FiArrowDownCircle,
   FiArrowUpCircle, FiTable, FiUpload, FiClock,
   FiMenu, FiX, FiChevronLeft, FiLayers, FiList,
-  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown, FiCalendar, FiUsers, FiUserCheck, FiClipboard
+  FiShoppingCart, FiSettings, FiBarChart2, FiBook, FiAlertTriangle, FiTrendingDown, FiCalendar,   FiUsers, FiUserCheck, FiClipboard, FiCpu
 } from 'react-icons/fi';
 
 import Dashboard from './pages/Dashboard';
@@ -34,6 +34,7 @@ import NoMovementStocks from './pages/NoMovementStocks';
 import LowSafetyStocks from './pages/LowSafetyStocks';
 import Calendar from './pages/Calendar';
 import Settings from './pages/Settings';
+import CKIntelligence from './pages/CKIntelligence';
 
 // Sidebar wrapper that auto-closes on mobile route change
 function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
@@ -56,6 +57,7 @@ function SidebarNav({ collapsed, mobileOpen, onNavClick }) {
     <nav className="sidebar-nav">
       <div className="nav-section-title"><span>Overview</span></div>
       {link('/', <FiGrid />, 'Dashboard', true)}
+      {link('/ck-intelligence', <FiCpu />, 'CK Intelligence')}
 
       <div className="nav-section-title"><span>Master Data</span></div>
       {link('/products', <FiPackage />, 'Product Master')}
@@ -171,6 +173,7 @@ function App() {
           <div className="main-scroll">
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/ck-intelligence" element={<CKIntelligence />} />
               <Route path="/products" element={<Products />} />
               <Route path="/locations" element={<Locations />} />
               <Route path="/stock-in" element={<StockIn />} />
